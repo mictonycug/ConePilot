@@ -1,0 +1,69 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  sessions  Session[]
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  name         String   @default("Untitled Session")
+  fieldWidth   Float    @default(20.0)  // meters
+  fieldHeight  Float    @default(15.0)  // meters
+  cones        Cone[]
+  robotPath    PathPoint[]
+  status       SessionStatus @default(SETUP)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Cone {
+  id          String   @id @default(uuid())
+  sessionId   String
+  session     Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  x           Float    // x coordinate in meters
+  y           Float    // y coordinate in meters
+  orderIndex  Int?     // TSP-calculated order (null until calculated)
+  status      ConeStatus @default(PENDING)
+  placedAt    DateTime?
+  collectedAt DateTime?
+}
+
+model PathPoint {
+  id        String   @id @default(uuid())
+  sessionId String
+  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  x         Float
+  y         Float
+  timestamp DateTime @default(now())
+}
+
+enum SessionStatus {
+  SETUP       // User is placing cones
+  READY       // Cones placed, path calculated
+  PLACING     // Robot is placing cones
+  COLLECTING  // Robot is collecting cones
+  COMPLETED   // All done
+  PAUSED      // Operation paused
+}
+
+enum ConeStatus {
+  PENDING     // Not yet placed
+  PLACED      // Successfully placed on field
+  COLLECTED   // Successfully picked up
+  FAILED      // Failed to place/collect
+}
