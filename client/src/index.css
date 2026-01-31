@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #FAF9F7;
+  --color-background-secondary: #FFFFFF;
+  --color-primary: #D97706;
+  --color-text-primary: #1F1F1F;
+  --color-text-secondary: #6B6B6B;
+  --color-border: #E5E5E5;
+  --color-success: #10B981;
+  --color-error: #EF4444;
+
+  --font-sans: 'Söhne', 'Inter', -apple-system, BlinkMacSystemFont, 'sans-serif';
+  --font-mono: 'Söhne Mono', 'Fira Code', monospace;
+}
+
+@layer base {
+  body {
+    @apply bg-background text-text-primary antialiased;
+  }
+}
