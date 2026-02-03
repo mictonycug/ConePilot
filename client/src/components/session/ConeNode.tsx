@@ -29,7 +29,8 @@ export const ConeNode: React.FC<ConeNodeProps> = ({ cone, scale, onDragEnd, onDe
                 onDragEnd(cone.id, newX, newY);
             }}
             onClick={(e) => {
-                if (e.evt.button === 2) { // Right click
+                e.cancelBubble = true;
+                if (window.confirm('Delete this cone?')) {
                     onDelete(cone.id);
                 }
             }}
