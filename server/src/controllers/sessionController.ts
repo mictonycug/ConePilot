@@ -167,3 +167,30 @@ export const deleteSession = async (req: Request, res: Response) => {
         res.status(500).json({ message: 'Internal server error' });
     }
 };
+
+export const updateSession = async (req: Request, res: Response) => {
+    try {
+        const userId = req.user?.id;
+        const { id } = req.params;
+        const { name } = req.body;
+
+        if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+
+        const session = await prisma.session.findUnique({
+            where: { id }
+        });
+
+        if (!session) return res.status(404).json({ message: 'Session not found' });
+        if (session.userId !== userId) return res.status(403).json({ message: 'Forbidden' });
+
+        const updatedSession = await prisma.session.update({
+            where: { id },
+            data: { name }
+        });
+
+        res.json({ session: updatedSession });
+    } catch (error) {
+        console.error('UpdateSession error:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
