@@ -40,6 +40,7 @@ interface SessionState {
     createSession: (name: string) => Promise<string>; // returns id
     loadSessionById: (id: string) => Promise<void>;
     deleteSession: (id: string) => Promise<void>;
+    renameSession: (id: string, name: string) => Promise<void>;
     addCone: (sessionId: string, x: number, y: number) => Promise<void>;
     removeCone: (sessionId: string, coneId: string) => Promise<void>;
     updateConePosition: (sessionId: string, coneId: string, x: number, y: number) => Promise<void>;
@@ -153,6 +154,22 @@ export const useSessionStore = create<SessionState>((set) => ({
         } catch (e) {
             set({ isLoading: false });
             throw e;
+        }
+    },
+
+    renameSession: async (id, name) => {
+        // Optimistic update
+        set(state => ({
+            sessions: state.sessions.map(s => s.id === id ? { ...s, name } : s),
+            currentSession: state.currentSession?.id === id ? { ...state.currentSession, name } : state.currentSession
+        }));
+
+        try {
+            await api.put(`/sessions/${id}`, { name });
+        } catch (e) {
+            // Revert? For now just log
+            console.error("Failed to rename session", e);
+            // Could reload sessions here to revert
         }
     },
 

@@ -1,12 +1,12 @@
 
 import React, { useEffect } from 'react';
 import { Navbar } from '../components/layout/Navbar';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, Pencil } from 'lucide-react';
 import { useSessionStore } from '../store/useSessionStore';
 import { useNavigate } from 'react-router-dom';
 
 export const Dashboard: React.FC = () => {
-    const { sessions, loadSessions, createSession, deleteSession, isLoading } = useSessionStore();
+    const { sessions, loadSessions, createSession, deleteSession, renameSession, isLoading } = useSessionStore();
     const navigate = useNavigate();
 
     console.log('Dashboard render. Sessions:', sessions.length, 'IsLoading:', isLoading);
@@ -32,6 +32,18 @@ export const Dashboard: React.FC = () => {
                 await deleteSession(id);
             } catch (err) {
                 console.error("Failed to delete session", err);
+            }
+        }
+    };
+
+    const handleRenameSession = async (e: React.MouseEvent, id: string, currentName: string) => {
+        e.stopPropagation();
+        const newName = window.prompt("Enter new session name:", currentName);
+        if (newName && newName !== currentName) {
+            try {
+                await renameSession(id, newName);
+            } catch (err) {
+                console.error("Failed to rename session", err);
             }
         }
     };
@@ -84,6 +96,13 @@ export const Dashboard: React.FC = () => {
                                             }`}>
                                             {session.status}
                                         </span>
+                                        <button
+                                            onClick={(e) => handleRenameSession(e, session.id, session.name)}
+                                            className="p-1 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded transition-colors"
+                                            title="Rename Session"
+                                        >
+                                            <Pencil size={16} />
+                                        </button>
                                         <button
                                             onClick={(e) => handleDeleteSession(e, session.id)}
                                             className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"

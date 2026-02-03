@@ -6,7 +6,8 @@ import {
     addCone,
     deleteCone,
     updateConePosition,
-    deleteSession
+    deleteSession,
+    updateSession
 } from '../controllers/sessionController';
 import { authenticateToken } from '../middleware/auth';
 
@@ -17,6 +18,7 @@ router.use(authenticateToken);
 router.get('/', getSessions);
 router.post('/', createSession);
 router.get('/:id', getSessionById);
+router.put('/:id', updateSession);
 router.delete('/:id', deleteSession);
 
 // Cone management within session
