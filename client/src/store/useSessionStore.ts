@@ -1,8 +1,7 @@
+
 import { create } from 'zustand';
 import { api } from '../lib/api';
-// import { Session, Cone } from '../../../shared/types'; // (Unused)
 
-// Re-defining for safety in store file to avoid path hell if alias is flaky
 export const SessionStatus = {
     SETUP: 'SETUP',
     READY: 'READY',
@@ -28,6 +27,7 @@ export interface SessionData {
     fieldHeight: number;
     status: SessionStatus;
     cones: ConeData[];
+    robotPath?: { x: number; y: number }[];
     updatedAt?: string;
 }
 
@@ -39,6 +39,7 @@ interface SessionState {
     loadSessions: () => Promise<void>;
     createSession: (name: string) => Promise<string>; // returns id
     loadSessionById: (id: string) => Promise<void>;
+    deleteSession: (id: string) => Promise<void>;
     addCone: (sessionId: string, x: number, y: number) => Promise<void>;
     removeCone: (sessionId: string, coneId: string) => Promise<void>;
     updateConePosition: (sessionId: string, coneId: string, x: number, y: number) => Promise<void>;
@@ -106,7 +107,12 @@ export const useSessionStore = create<SessionState>((set) => ({
             const { data } = await api.post<{ session: SessionData }>('/sessions', { name });
             set(state => ({
                 sessions: [data.session, ...state.sessions],
-                isLoading: false
+                isLoading: false,
+                // Clear simulation state for new session
+                optimizedPath: [],
+                simulationStats: { conesPlaced: 0, distanceTraveled: 0, etaSeconds: 0 },
+                currentSequenceLogs: [],
+                placementHistory: []
             }));
             return data.session.id;
         } catch (e) {
@@ -119,9 +125,34 @@ export const useSessionStore = create<SessionState>((set) => ({
         set({ isLoading: true });
         try {
             const { data } = await api.get<{ session: SessionData }>(`/sessions/${id}`);
-            set({ currentSession: data.session, isLoading: false });
+            set({
+                currentSession: data.session,
+                // Sync optimizedPath with the session's stored path
+                optimizedPath: data.session.robotPath ? data.session.robotPath.map(p => ({ x: p.x, y: p.y })) : [],
+                isLoading: false,
+                // Reset simulation state when switching sessions
+                simulationStatus: 'IDLE',
+                isSimulating: false,
+                currentSequenceLogs: [],
+                placementHistory: []
+            });
         } catch (e) {
             set({ isLoading: false });
+        }
+    },
+
+    deleteSession: async (id) => {
+        set({ isLoading: true });
+        try {
+            await api.delete(`/sessions/${id}`);
+            set(state => ({
+                sessions: state.sessions.filter(s => s.id !== id),
+                isLoading: false,
+                currentSession: state.currentSession?.id === id ? null : state.currentSession
+            }));
+        } catch (e) {
+            set({ isLoading: false });
+            throw e;
         }
     },
 

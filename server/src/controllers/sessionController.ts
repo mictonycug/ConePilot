@@ -144,3 +144,26 @@ export const updateConePosition = async (req: Request, res: Response) => {
         res.status(500).json({ message: 'Internal server error' });
     }
 };
+
+export const deleteSession = async (req: Request, res: Response) => {
+    try {
+        const userId = req.user?.id;
+        const { id } = req.params;
+
+        if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+
+        const session = await prisma.session.findUnique({
+            where: { id }
+        });
+
+        if (!session) return res.status(404).json({ message: 'Session not found' });
+        if (session.userId !== userId) return res.status(403).json({ message: 'Forbidden' });
+
+        await prisma.session.delete({ where: { id } });
+
+        res.json({ success: true, message: 'Session deleted' });
+    } catch (error) {
+        console.error('DeleteSession error:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};

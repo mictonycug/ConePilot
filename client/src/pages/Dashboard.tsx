@@ -1,11 +1,12 @@
+
 import React, { useEffect } from 'react';
 import { Navbar } from '../components/layout/Navbar';
-import { Plus } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
 import { useSessionStore } from '../store/useSessionStore';
 import { useNavigate } from 'react-router-dom';
 
 export const Dashboard: React.FC = () => {
-    const { sessions, loadSessions, createSession, isLoading } = useSessionStore();
+    const { sessions, loadSessions, createSession, deleteSession, isLoading } = useSessionStore();
     const navigate = useNavigate();
 
     console.log('Dashboard render. Sessions:', sessions.length, 'IsLoading:', isLoading);
@@ -21,6 +22,17 @@ export const Dashboard: React.FC = () => {
             navigate(`/session/${id}`);
         } catch (e) {
             console.error(e);
+        }
+    };
+
+    const handleDeleteSession = async (e: React.MouseEvent, id: string) => {
+        e.stopPropagation();
+        if (window.confirm('Are you sure you want to delete this session?')) {
+            try {
+                await deleteSession(id);
+            } catch (err) {
+                console.error("Failed to delete session", err);
+            }
         }
     };
 
@@ -67,10 +79,19 @@ export const Dashboard: React.FC = () => {
                             >
                                 <div className="flex justify-between items-start mb-4">
                                     <h3 className="font-semibold text-text-primary truncate">{session.name}</h3>
-                                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${session.status === 'COMPLETED' ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'
-                                        }`}>
-                                        {session.status}
-                                    </span>
+                                    <div className="flex items-center gap-2">
+                                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${session.status === 'COMPLETED' ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'
+                                            }`}>
+                                            {session.status}
+                                        </span>
+                                        <button
+                                            onClick={(e) => handleDeleteSession(e, session.id)}
+                                            className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                                            title="Delete Session"
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+                                    </div>
                                 </div>
                                 <div className="text-sm text-text-secondary">
                                     {session.cones?.length || 0} cones • {new Date(session.updatedAt || Date.now()).toLocaleDateString()}
