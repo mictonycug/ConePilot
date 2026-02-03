@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, Square, Calculator } from 'lucide-react';
+import { Play, Square } from 'lucide-react';
 import { useSessionStore } from '../../store/useSessionStore';
 import { calculateOptimalPath } from '../../services/tsp';
 
@@ -8,7 +8,8 @@ export const ControlPanel: React.FC = () => {
 
     if (!currentSession) return null;
 
-    const handleCalculatePath = () => {
+    const handleStartPlacing = () => {
+        // Calculate Path
         const points = currentSession.cones.map(c => ({ id: c.id, x: c.x, y: c.y }));
         // Add start path (0,0)
         const path = calculateOptimalPath(points, { id: 'start', x: 0, y: 0 });
@@ -16,9 +17,8 @@ export const ControlPanel: React.FC = () => {
         // Convert to simple points for store
         const simplePath = [{ x: 0, y: 0 }, ...path.map(p => ({ x: p.x, y: p.y }))];
         setOptimizedPath(simplePath);
-    };
 
-    const handleStartPlacing = () => {
+        // Start Simulation
         resetSimulationStats();
         setIsSimulating(true);
     };
@@ -39,15 +39,6 @@ export const ControlPanel: React.FC = () => {
 
             <div className="space-y-3">
                 <button
-                    onClick={handleCalculatePath}
-                    className="w-full flex items-center justify-center gap-2 py-2 px-4 bg-white border border-border rounded-lg hover:bg-gray-50 text-text-primary transition-colors disabled:opacity-50"
-                    disabled={isSimulating}
-                >
-                    <Calculator size={18} />
-                    Calculate Path
-                </button>
-
-                <button
                     onClick={handleStartPlacing}
                     className="w-full flex items-center justify-center gap-2 py-2 px-4 bg-primary text-white rounded-lg hover:bg-opacity-90 transition-colors shadow-sm disabled:opacity-50"
                     disabled={isSimulating}
@@ -55,6 +46,7 @@ export const ControlPanel: React.FC = () => {
                     <Play size={18} />
                     Start Placing
                 </button>
+
 
                 <button
                     onClick={handleStop}
