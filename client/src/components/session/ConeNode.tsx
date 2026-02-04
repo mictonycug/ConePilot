@@ -38,6 +38,14 @@ export const ConeNode: React.FC<ConeNodeProps> = ({ cone, scale, onDragEnd, onDe
                 e.evt.preventDefault(); // Prevent native menu
                 onDelete(cone.id);
             }}
+            onMouseEnter={(e) => {
+                const container = e.target.getStage()?.container();
+                if (container) container.style.cursor = 'pointer';
+            }}
+            onMouseLeave={(e) => {
+                const container = e.target.getStage()?.container();
+                if (container) container.style.cursor = 'default';
+            }}
         >
             {/* Selection Area / Hit Area */}
             <Circle radius={20} fill="transparent" />
