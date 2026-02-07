@@ -22,7 +22,7 @@ export const RegisterPage: React.FC = () => {
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-background p-4">
+        <div className="flex-1 flex items-center justify-center bg-background p-4">
             <div className="w-full max-w-md bg-white p-8 rounded-2xl shadow-sm border border-border">
                 <h2 className="text-2xl font-bold mb-6 text-text-primary text-center">Create Account</h2>
 

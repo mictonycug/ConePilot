@@ -1,6 +1,5 @@
 
 import React, { useEffect } from 'react';
-import { Navbar } from '../components/layout/Navbar';
 import { Plus, Trash2, Pencil } from 'lucide-react';
 import { useSessionStore } from '../store/useSessionStore';
 import { useNavigate } from 'react-router-dom';
@@ -49,10 +48,8 @@ export const Dashboard: React.FC = () => {
     };
 
     return (
-        <div className="min-h-screen bg-background">
-            <Navbar />
-
-            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="flex-1 bg-background">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
                 <div className="flex items-center justify-between mb-8">
                     <div>
                         <h1 className="text-2xl font-bold text-text-primary">Your Sessions</h1>
@@ -119,7 +116,7 @@ export const Dashboard: React.FC = () => {
                         ))}
                     </div>
                 )}
-            </main>
+            </div>
         </div>
     );
 };
