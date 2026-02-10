@@ -1,5 +1,5 @@
 import React from 'react';
-import { Circle, Text, Group, Image as KonvaImage } from 'react-konva';
+import { Circle, Text, Group, Image as KonvaImage, Rect } from 'react-konva';
 import useImage from 'use-image';
 import type { ConeData } from '../../store/useSessionStore';
 
@@ -22,7 +22,9 @@ export const ConeNode: React.FC<ConeNodeProps> = ({ cone, scale, fieldHeight, on
 
     const snapPx = snapSize * scale;
     const half = coneSize / 2;
-    const hitRadius = Math.max(half, 10);
+    // Hit area should match cone size closely (coneSize is in field coordinate pixels)
+    // Just slightly larger for easier clicking (1.2x), but not too big
+    const hitSize = coneSize * 1.2;
     const badgeOffset = half * 0.7;
 
     return (
@@ -63,8 +65,14 @@ export const ConeNode: React.FC<ConeNodeProps> = ({ cone, scale, fieldHeight, on
                 if (container) container.style.cursor = 'default';
             }}
         >
-            {/* Selection Area / Hit Area */}
-            <Circle radius={hitRadius} fill="transparent" />
+            {/* Selection Area / Hit Area - sized to match cone image */}
+            <Rect
+                x={-hitSize / 2}
+                y={-hitSize / 2}
+                width={hitSize}
+                height={hitSize}
+                fill="transparent"
+            />
 
             {imageMode && image ? (
                 <KonvaImage
