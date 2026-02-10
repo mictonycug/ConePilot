@@ -19,7 +19,8 @@ export const SessionView: React.FC = () => {
         isSimulating,
         simulationStats,
         resetSimulationStats,
-        placementHistory
+        placementHistory,
+        removeAllCones
     } = useSessionStore();
 
     useEffect(() => {
@@ -89,7 +90,13 @@ export const SessionView: React.FC = () => {
                         <SessionControls
                             onStart={handleStartPlacing}
                             onStop={handleStop}
+                            onClearAll={() => {
+                                if (window.confirm('Delete all cones?')) {
+                                    removeAllCones(currentSession.id);
+                                }
+                            }}
                             isSimulating={isSimulating}
+                            coneCount={currentSession.cones.length}
                         />
                     </div>
 
