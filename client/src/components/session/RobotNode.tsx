@@ -178,15 +178,33 @@ export const RobotNode: React.FC<RobotNodeProps> = ({ x, y, scale, path }) => {
 
     }, [path, scale]);
 
+    // Robot dimensions: 40cm x 40cm = 0.4m x 0.4m
+    const robotWidth = 0.4 * scale;  // 40cm = 0.4m in pixels
+    const robotHeight = 0.4 * scale; // 40cm = 0.4m in pixels
+
+    // Component sizes (proportional to robot size)
+    const wheelW = robotWidth * 0.25;    // 10cm wheels
+    const wheelH = robotHeight * 0.15;   // 6cm wheels
+    const bodyW = robotWidth * 0.8;      // 32cm body
+    const bodyH = robotHeight * 0.6;     // 24cm body
+    const sensorW = robotWidth * 0.15;   // 6cm sensor
+    const sensorH = robotHeight * 0.45;  // 18cm sensor
+
     return (
         <Group ref={groupRef} x={x * scale} y={y * scale}>
-            <Group offsetX={20} offsetY={15}>
-                <Rect x={0} y={0} width={10} height={6} fill="#333" cornerRadius={2} />
-                <Rect x={30} y={0} width={10} height={6} fill="#333" cornerRadius={2} />
-                <Rect x={0} y={24} width={10} height={6} fill="#333" cornerRadius={2} />
-                <Rect x={30} y={24} width={10} height={6} fill="#333" cornerRadius={2} />
-                <Rect x={4} y={3} width={32} height={24} fill="#059669" cornerRadius={4} shadowBlur={5} shadowOpacity={0.3} />
-                <Rect x={26} y={6} width={6} height={18} fill="#A7F3D0" cornerRadius={1} />
+            <Group offsetX={robotWidth / 2} offsetY={robotHeight / 2}>
+                {/* Front left wheel */}
+                <Rect x={0} y={0} width={wheelW} height={wheelH} fill="#333" cornerRadius={2} />
+                {/* Front right wheel */}
+                <Rect x={robotWidth - wheelW} y={0} width={wheelW} height={wheelH} fill="#333" cornerRadius={2} />
+                {/* Back left wheel */}
+                <Rect x={0} y={robotHeight - wheelH} width={wheelW} height={wheelH} fill="#333" cornerRadius={2} />
+                {/* Back right wheel */}
+                <Rect x={robotWidth - wheelW} y={robotHeight - wheelH} width={wheelW} height={wheelH} fill="#333" cornerRadius={2} />
+                {/* Robot body */}
+                <Rect x={(robotWidth - bodyW) / 2} y={(robotHeight - bodyH) / 2} width={bodyW} height={bodyH} fill="#059669" cornerRadius={4} shadowBlur={5} shadowOpacity={0.3} />
+                {/* Sensor/indicator */}
+                <Rect x={robotWidth - sensorW - (robotWidth - bodyW) / 2} y={(robotHeight - sensorH) / 2} width={sensorW} height={sensorH} fill="#A7F3D0" cornerRadius={1} />
             </Group>
         </Group>
     );

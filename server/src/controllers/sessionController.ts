@@ -33,8 +33,8 @@ export const createSession = async (req: Request, res: Response) => {
             data: {
                 userId,
                 name: name || 'Untitled Session',
-                fieldWidth: fieldWidth || 20.0,
-                fieldHeight: fieldHeight || 15.0,
+                fieldWidth: fieldWidth || 3.0,
+                fieldHeight: fieldHeight || 3.0,
                 status: SessionStatus.SETUP,
             },
         });

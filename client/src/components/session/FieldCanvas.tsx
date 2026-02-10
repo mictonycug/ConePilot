@@ -1,9 +1,10 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { Stage, Layer, Rect, Line, Text, Image as KonvaImage, Group } from 'react-konva';
 import useImage from 'use-image';
 import { useSessionStore } from '../../store/useSessionStore';
 import { ConeNode } from './ConeNode';
 import { RobotNode } from './RobotNode';
+import { Grid3x3 } from 'lucide-react';
 
 interface FieldCanvasProps {
     width: number;
@@ -11,22 +12,25 @@ interface FieldCanvasProps {
 }
 
 const SCALE = 40; // 40px/m
-const PADDING = 60;
 const ZOOM_STEP = 0.5;
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
+const SNAP_OPTIONS = [0, 0.25, 0.5, 1];
+
+const snapVal = (v: number, size: number) => size > 0 ? Math.round(v / size) * size : v;
 
 // Inner component to handle image loading hook
-const ConeImage = ({ x, y, opacity = 1, rotation = 0 }: { x: number, y: number, opacity?: number, rotation?: number }) => {
+const ConeImage = ({ x, y, opacity = 1, rotation = 0, size = 30 }: { x: number, y: number, opacity?: number, rotation?: number, size?: number }) => {
     const [image] = useImage('/cone.png');
+    const half = size / 2;
     return <KonvaImage
         image={image}
         x={x}
         y={y}
-        width={30}
-        height={30}
-        offsetX={15}
-        offsetY={15}
+        width={size}
+        height={size}
+        offsetX={half}
+        offsetY={half}
         opacity={opacity}
         rotation={rotation}
     />;
@@ -40,6 +44,9 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
     const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
     const [zoom, setZoom] = useState(1);
     const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
+    const [snapIndex, setSnapIndex] = useState(2); // default to 0.5m
+
+    const snapSize = SNAP_OPTIONS[snapIndex];
 
     // Measure container size
     useEffect(() => {
@@ -62,15 +69,27 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
 
     if (!currentSession) return null;
 
-    const fieldWidthPx = currentSession.fieldWidth * SCALE;
-    const fieldHeightPx = currentSession.fieldHeight * SCALE;
+    const fW = currentSession.fieldWidth;
+    const fH = currentSession.fieldHeight;
+    const fieldWidthPx = fW * SCALE;
+    const fieldHeightPx = fH * SCALE;
+
+    // Dynamic padding: smaller for small fields, larger for big ones
+    const PADDING = Math.max(fW, fH) <= 5 ? 30 : 60;
+
     const totalWidth = fieldWidthPx + PADDING * 2;
     const totalHeight = fieldHeightPx + PADDING * 2;
 
-    // Fit scale: shrink to fit container, but never upscale past 1:1
+    // Fit scale: shrink or grow to fit container
     const fitScale = containerSize.width > 0
-        ? Math.min(containerSize.width / totalWidth, containerSize.height / totalHeight, 1)
+        ? Math.min(containerSize.width / totalWidth, containerSize.height / totalHeight)
         : 1;
+
+    // Scale-aware stroke: divide by fitScale so strokes look consistent regardless of zoom level
+    const strokeScale = 1 / fitScale;
+
+    // Cone size: target ~30px visual on screen, but never exceed 0.3m in field coords
+    const coneSize = Math.max(8, Math.min(30 / fitScale, 0.3 * SCALE));
 
     const actualScale = zoom * fitScale;
     const scaledWidth = totalWidth * actualScale;
@@ -110,18 +129,34 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
         setStagePos({ x: 0, y: 0 });
     };
 
-    // Convert screen pointer to field coordinates (meters)
-    const pointerToFieldCoords = (stage: any) => {
+    // Snap toggle: cycle through options
+    const handleCycleSnap = () => setSnapIndex(prev => (prev + 1) % SNAP_OPTIONS.length);
+
+    // --- Y-flip helper: canvas Y → field Y and vice versa ---
+    // Field coords: origin (0,0) at bottom-left, Y increases upward
+    // Canvas coords: origin (0,0) at top-left, Y increases downward
+    const fieldToCanvasY = (fy: number) => (fH - fy) * SCALE;
+    const canvasToFieldY = (cy: number) => fH - (cy / SCALE);
+
+    // Convert screen pointer to field coordinates (meters), with optional snapping
+    const pointerToFieldCoords = (stage: any): { raw: { x: number; y: number }; snapped: { x: number; y: number } } | null => {
         const pointer = stage.getPointerPosition();
         if (!pointer) return null;
 
         const sx = stage.x();
         const sy = stage.y();
-        const x = ((pointer.x - sx) / actualScale - PADDING) / SCALE;
-        const y = ((pointer.y - sy) / actualScale - PADDING) / SCALE;
+        const canvasX = ((pointer.x - sx) / actualScale - PADDING) / SCALE;
+        const canvasY = ((pointer.y - sy) / actualScale - PADDING) / SCALE;
 
-        if (x >= 0 && x <= currentSession.fieldWidth && y >= 0 && y <= currentSession.fieldHeight) {
-            return { x, y };
+        // Convert canvas coords to field coords (flip Y)
+        const rawX = canvasX;
+        const rawY = fH - canvasY;
+
+        if (rawX >= 0 && rawX <= fW && rawY >= 0 && rawY <= fH) {
+            return {
+                raw: { x: rawX, y: rawY },
+                snapped: { x: snapVal(rawX, snapSize), y: snapVal(rawY, snapSize) },
+            };
         }
         return null;
     };
@@ -129,7 +164,8 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
     const handleMouseMove = (e: any) => {
         const stage = e.target.getStage();
         if (!stage) return;
-        setMousePos(pointerToFieldCoords(stage));
+        const coords = pointerToFieldCoords(stage);
+        setMousePos(coords ? coords.snapped : null);
     };
 
     const handleStageClick = (e: any) => {
@@ -141,31 +177,67 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
 
         const coords = pointerToFieldCoords(stage);
         if (coords) {
-            addCone(currentSession.id, coords.x, coords.y);
+            addCone(currentSession.id, coords.snapped.x, coords.snapped.y);
         }
     };
+
+    // Dynamic grid interval: 1m labels for small fields, 5m for large
+    const majorStep = Math.max(fW, fH) <= 10 ? 1 : 5;
+    const showSubGrid = Math.max(fW, fH) <= 5; // 0.5m sub-grid for small fields
+
+    // Scale-aware font & label offset
+    const labelFontSize = Math.max(8, Math.round(12 * Math.min(1, strokeScale)));
+    const labelOffset = Math.max(20, PADDING * 0.6);
 
     // Grid & Labels
     const gridLines = [];
     const labels = [];
-    for (let i = 0; i <= currentSession.fieldWidth; i += 1) {
-        gridLines.push(
-            <Line key={`v${i}`} points={[i * SCALE, 0, i * SCALE, fieldHeightPx]} stroke={i % 5 === 0 ? "#D4D4D8" : "#E5E5E5"} strokeWidth={1} dash={i % 5 === 0 ? [] : [4, 4]} />
-        );
-        if (i % 5 === 0) labels.push(<Text key={`lx${i}`} x={i * SCALE - 10} y={-25} text={`${i}m`} fontSize={12} fill="#6B6B6B" />);
-    }
-    for (let i = 0; i <= currentSession.fieldHeight; i += 1) {
-        gridLines.push(
-            <Line key={`h${i}`} points={[0, i * SCALE, fieldWidthPx, i * SCALE]} stroke={i % 5 === 0 ? "#D4D4D8" : "#E5E5E5"} strokeWidth={1} dash={i % 5 === 0 ? [] : [4, 4]} />
-        );
-        if (i % 5 === 0) labels.push(<Text key={`ly${i}`} x={-35} y={i * SCALE - 6} text={`${i}m`} fontSize={12} fill="#6B6B6B" />);
+
+    // Sub-grid lines (0.5m intervals)
+    if (showSubGrid) {
+        for (let i = 0.5; i < fW; i += 1) {
+            gridLines.push(
+                <Line key={`sv${i}`} points={[i * SCALE, 0, i * SCALE, fieldHeightPx]} stroke="#F0F0F0" strokeWidth={Math.max(0.5, 0.5 * strokeScale)} />
+            );
+        }
+        for (let i = 0.5; i < fH; i += 1) {
+            gridLines.push(
+                <Line key={`sh${i}`} points={[0, i * SCALE, fieldWidthPx, i * SCALE]} stroke="#F0F0F0" strokeWidth={Math.max(0.5, 0.5 * strokeScale)} />
+            );
+        }
     }
 
-    // Path Line Points
-    const pathPoints = optimizedPath.flatMap(p => [p.x * SCALE, p.y * SCALE]);
+    // Major/minor grid lines
+    for (let i = 0; i <= fW; i += 1) {
+        const isMajor = i % majorStep === 0;
+        gridLines.push(
+            <Line key={`v${i}`} points={[i * SCALE, 0, i * SCALE, fieldHeightPx]} stroke={isMajor ? "#D4D4D8" : "#E5E5E5"} strokeWidth={Math.max(0.5, (isMajor ? 0.75 : 0.5) * strokeScale)} dash={isMajor ? [] : [4, 4]} />
+        );
+        if (isMajor) labels.push(<Text key={`lx${i}`} x={i * SCALE - 10} y={fieldHeightPx + labelOffset * 0.4} text={`${i}m`} fontSize={labelFontSize} fill="#6B6B6B" />);
+    }
+    for (let i = 0; i <= fH; i += 1) {
+        const isMajor = i % majorStep === 0;
+        gridLines.push(
+            <Line key={`h${i}`} points={[0, i * SCALE, fieldWidthPx, i * SCALE]} stroke={isMajor ? "#D4D4D8" : "#E5E5E5"} strokeWidth={Math.max(0.5, (isMajor ? 0.75 : 0.5) * strokeScale)} dash={isMajor ? [] : [4, 4]} />
+        );
+        // Y labels: flipped — canvas row i shows field value (fH - i)
+        if (isMajor) labels.push(<Text key={`ly${i}`} x={-labelOffset} y={i * SCALE - 6} text={`${fH - i}m`} fontSize={labelFontSize} fill="#6B6B6B" />);
+    }
+
+    // Path Line Points (flip Y for canvas)
+    const pathPoints = optimizedPath.flatMap(p => [p.x * SCALE, fieldToCanvasY(p.y)]);
+
+    // Pre-transform path for RobotNode (flip Y into canvas field coords)
+    // Memoized so the reference stays stable and doesn't restart the animation on every render
+    const robotPath = useMemo(
+        () => isSimulating ? optimizedPath.map(p => ({ x: p.x, y: fH - p.y })) : [],
+        [isSimulating, optimizedPath, fH]
+    );
 
     const stageWidth = containerSize.width || totalWidth;
     const stageHeight = containerSize.height || totalHeight;
+
+    const snapLabel = snapSize > 0 ? `${snapSize}m` : 'OFF';
 
     return (
         <div
@@ -193,7 +265,7 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
                 ref={stageRef}
             >
                 <Layer x={PADDING} y={PADDING}>
-                    <Rect width={fieldWidthPx} height={fieldHeightPx} fill="#F4F4F5" stroke="#D4D4D8" strokeWidth={2} />
+                    <Rect width={fieldWidthPx} height={fieldHeightPx} fill="#F4F4F5" stroke="#D4D4D8" strokeWidth={Math.max(0.5, 1 * strokeScale)} />
                     {gridLines}
                     {labels}
 
@@ -202,7 +274,7 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
                         <Line
                             points={pathPoints}
                             stroke="#000000"
-                            strokeWidth={3}
+                            strokeWidth={Math.max(1, 2 * strokeScale)}
                             dash={[10, 5]}
                             lineCap="round"
                             lineJoin="round"
@@ -216,6 +288,9 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
                             key={cone.id}
                             cone={cone}
                             scale={SCALE}
+                            fieldHeight={fH}
+                            snapSize={snapSize}
+                            coneSize={coneSize}
                             onDragEnd={(id, x, y) => updateConePosition(currentSession.id, id, x, y)}
                             onDelete={(id) => removeCone(currentSession.id, id)}
                             imageMode={true}
@@ -223,24 +298,56 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
                         />
                     ))}
 
-                    {/* Robot Layer (On Top) */}
+                    {/* Robot Layer (On Top) — path is pre-flipped to canvas coords */}
                     <RobotNode
                         x={0}
-                        y={0}
+                        y={fH}
                         scale={SCALE}
-                        path={isSimulating ? optimizedPath : []}
+                        path={robotPath}
                     />
 
-                    {/* Ghost Cone Cursor */}
+                    {/* Ghost Cone Cursor (mousePos is in field coords, convert to canvas) */}
                     {mousePos && !isSimulating && (
-                        <Group x={mousePos.x * SCALE} y={mousePos.y * SCALE} opacity={0.6} listening={false}>
-                            <ConeImage x={0} y={0} />
+                        <Group x={mousePos.x * SCALE} y={fieldToCanvasY(mousePos.y)} opacity={0.6} listening={false}>
+                            <ConeImage x={0} y={0} size={coneSize} />
                         </Group>
                     )}
                 </Layer>
             </Stage>
 
-            {/* Zoom Controls */}
+            {/* Top-left: Zoom level */}
+            <div className="absolute top-3 left-3 bg-white/90 border border-gray-200 rounded-md px-2 py-1 text-xs font-medium text-gray-500 shadow-sm z-10 select-none pointer-events-none">
+                {Math.round(actualScale * 100)}%
+            </div>
+
+            {/* Top-right: Live coordinate readout */}
+            <div className="absolute top-3 right-3 bg-white/90 border border-gray-200 rounded-md px-2.5 py-1 text-xs font-mono text-gray-500 shadow-sm z-10 select-none pointer-events-none">
+                {mousePos
+                    ? <span><span className="text-gray-400">X</span> {mousePos.x.toFixed(2)}m &nbsp;<span className="text-gray-400">Y</span> {mousePos.y.toFixed(2)}m</span>
+                    : <span className="text-gray-400">-- , --</span>
+                }
+            </div>
+
+            {/* Bottom-left: Snap toggle */}
+            <button
+                onClick={handleCycleSnap}
+                className={`absolute bottom-3 left-3 z-10 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg shadow-md border text-xs font-medium select-none transition-colors ${
+                    snapSize > 0
+                        ? 'bg-primary/10 border-primary/30 text-primary hover:bg-primary/20'
+                        : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+                }`}
+                title="Click to cycle snap grid"
+            >
+                <Grid3x3 size={14} />
+                <span>SNAP</span>
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                    snapSize > 0 ? 'bg-primary/20 text-primary' : 'bg-gray-100 text-gray-400'
+                }`}>
+                    {snapLabel}
+                </span>
+            </button>
+
+            {/* Bottom-right: Zoom controls */}
             <div className="absolute bottom-3 right-3 flex flex-col gap-1.5 z-10">
                 <button
                     onClick={handleZoomIn}
@@ -263,11 +370,6 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
                 >
                     FIT
                 </button>
-            </div>
-
-            {/* Zoom Level Indicator */}
-            <div className="absolute top-3 left-3 bg-white/90 border border-gray-200 rounded-md px-2 py-1 text-xs font-medium text-gray-500 shadow-sm z-10 select-none pointer-events-none">
-                {Math.round(actualScale * 100)}%
             </div>
         </div>
     );

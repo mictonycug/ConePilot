@@ -37,12 +37,13 @@ interface SessionState {
     isLoading: boolean;
 
     loadSessions: () => Promise<void>;
-    createSession: (name: string) => Promise<string>; // returns id
+    createSession: (name: string, fieldWidth?: number, fieldHeight?: number) => Promise<string>; // returns id
     loadSessionById: (id: string) => Promise<void>;
     deleteSession: (id: string) => Promise<void>;
     renameSession: (id: string, name: string) => Promise<void>;
     addCone: (sessionId: string, x: number, y: number) => Promise<void>;
     removeCone: (sessionId: string, coneId: string) => Promise<void>;
+    removeAllCones: (sessionId: string) => Promise<void>;
     updateConePosition: (sessionId: string, coneId: string, x: number, y: number) => Promise<void>;
 
     // Simulation State
@@ -102,10 +103,10 @@ export const useSessionStore = create<SessionState>((set) => ({
     },
 
 
-    createSession: async (name) => {
+    createSession: async (name, fieldWidth, fieldHeight) => {
         set({ isLoading: true });
         try {
-            const { data } = await api.post<{ session: SessionData }>('/sessions', { name });
+            const { data } = await api.post<{ session: SessionData }>('/sessions', { name, fieldWidth, fieldHeight });
             set(state => ({
                 sessions: [data.session, ...state.sessions],
                 isLoading: false,
@@ -198,6 +199,18 @@ export const useSessionStore = create<SessionState>((set) => ({
                 }
             };
         });
+    },
+
+    removeAllCones: async (sessionId) => {
+        const state = useSessionStore.getState();
+        if (!state.currentSession || state.currentSession.id !== sessionId) return;
+        const coneIds = state.currentSession.cones.map(c => c.id);
+        // Optimistic clear
+        set(state => {
+            if (!state.currentSession || state.currentSession.id !== sessionId) return state;
+            return { currentSession: { ...state.currentSession, cones: [] } };
+        });
+        await Promise.all(coneIds.map(id => api.delete(`/sessions/${sessionId}/cones/${id}`)));
     },
 
     updateConePosition: async (sessionId, coneId, x, y) => {

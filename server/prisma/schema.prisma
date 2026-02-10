@@ -23,8 +23,8 @@ model Session {
   userId       String
   user         User     @relation(fields: [userId], references: [id])
   name         String   @default("Untitled Session")
-  fieldWidth   Float    @default(20.0)  // meters
-  fieldHeight  Float    @default(15.0)  // meters
+  fieldWidth   Float    @default(3.0)   // meters
+  fieldHeight  Float    @default(3.0)   // meters
   cones        Cone[]
   robotPath    PathPoint[]
   status       SessionStatus @default(SETUP)
