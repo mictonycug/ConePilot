@@ -37,7 +37,7 @@ const ConeImage = ({ x, y, opacity = 1, rotation = 0, size = 30 }: { x: number, 
 };
 
 export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height: _height }) => {
-    const { currentSession, addCone, updateConePosition, removeCone, optimizedPath, isSimulating } = useSessionStore();
+    const { currentSession, addCone, updateConePosition, removeCone, optimizedPath, isSimulating, robotPose, robotConnected } = useSessionStore();
     const stageRef = useRef<any>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [mousePos, setMousePos] = useState<{ x: number, y: number } | null>(null);
@@ -305,6 +305,24 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
                         scale={SCALE}
                         path={robotPath}
                     />
+
+                    {/* Real Robot Position Indicator */}
+                    {robotPose && robotConnected && (
+                        <Group x={robotPose.x * SCALE} y={robotPose.y * SCALE}>
+                            <Rect
+                                width={16}
+                                height={16}
+                                offsetX={8}
+                                offsetY={8}
+                                fill="#3B82F6"
+                                rotation={robotPose.theta * (180 / Math.PI)}
+                                cornerRadius={3}
+                                shadowBlur={6}
+                                shadowOpacity={0.4}
+                                shadowColor="#3B82F6"
+                            />
+                        </Group>
+                    )}
 
                     {/* Ghost Cone Cursor (mousePos is in field coords, convert to canvas) */}
                     {mousePos && !isSimulating && (

@@ -1,6 +1,7 @@
 
 import { create } from 'zustand';
 import { api } from '../lib/api';
+import { rosBridge, type RobotPose } from '../services/rosbridge';
 
 export const SessionStatus = {
     SETUP: 'SETUP',
@@ -62,6 +63,12 @@ interface SessionState {
     currentSequenceLogs: { step: string; timeTaken: number }[];
     placementHistory: { coneIndex: number; totalTime: number; logs: { step: string; timeTaken: number }[] }[];
 
+    // Robot Connection State
+    robotConnected: boolean;
+    robotUrl: string;
+    robotPose: RobotPose | null;
+    isConnecting: boolean;
+
     setOptimizedPath: (path: { x: number, y: number }[]) => void;
     setIsSimulating: (isSimulating: boolean) => void;
     setSimulationStatus: (status: 'IDLE' | 'MOVING' | 'PLACING' | 'COMPLETED') => void;
@@ -71,6 +78,12 @@ interface SessionState {
     addPlacementHistory: (entry: { coneIndex: number; totalTime: number; logs: { step: string; timeTaken: number }[] }) => void;
     clearSequenceLogs: () => void;
     resetSimulationStats: () => void;
+
+    // Robot Connection Actions
+    connectToRobot: (url: string) => Promise<void>;
+    disconnectRobot: () => void;
+    sendWaypointsToRobot: () => void;
+    stopRobot: () => void;
 }
 
 export const useSessionStore = create<SessionState>((set) => ({
@@ -91,6 +104,12 @@ export const useSessionStore = create<SessionState>((set) => ({
     },
     currentSequenceLogs: [],
     placementHistory: [],
+
+    // Robot Connection State
+    robotConnected: false,
+    robotUrl: '/robot',
+    robotPose: null,
+    isConnecting: false,
 
     loadSessions: async () => {
         set({ isLoading: true });
@@ -251,5 +270,52 @@ export const useSessionStore = create<SessionState>((set) => ({
         currentSequenceLogs: [],
         placementHistory: [],
         simulationStatus: 'IDLE'
-    })
+    }),
+
+    // Robot Connection Actions
+    connectToRobot: async (url: string) => {
+        set({ isConnecting: true, robotUrl: url });
+        try {
+            rosBridge.setCallbacks({
+                onConnectionChange: (connected) => {
+                    set({ robotConnected: connected });
+                    if (!connected) set({ robotPose: null });
+                },
+                onPoseUpdate: (pose) => {
+                    set({ robotPose: pose });
+                },
+            });
+            await rosBridge.connect(url);
+            set({ isConnecting: false });
+        } catch (e) {
+            console.error('[RosBridge] Connection failed:', e);
+            set({ isConnecting: false, robotConnected: false });
+        }
+    },
+
+    disconnectRobot: () => {
+        rosBridge.disconnect();
+        set({ robotConnected: false, robotPose: null });
+    },
+
+    sendWaypointsToRobot: async () => {
+        const state = useSessionStore.getState();
+        if (!state.robotConnected || state.optimizedPath.length === 0) return;
+
+        // Skip the first point (0,0 start) — send cone waypoints
+        const waypoints = state.optimizedPath.slice(1);
+
+        set({ isSimulating: true, simulationStatus: 'MOVING' });
+
+        const success = await rosBridge.sendWaypoints(waypoints);
+        if (!success) {
+            set({ isSimulating: false, simulationStatus: 'IDLE' });
+        }
+        // Pose updates come via polling; waypoint progress tracked via /status
+    },
+
+    stopRobot: () => {
+        rosBridge.stop();
+        set({ isSimulating: false, simulationStatus: 'IDLE' });
+    },
 }));
