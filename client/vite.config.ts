@@ -11,4 +11,13 @@ export default defineConfig({
       '@shared': path.resolve(__dirname, '../shared'),
     },
   },
+  server: {
+    proxy: {
+      '/robot': {
+        target: 'http://172.20.10.3:8888',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/robot/, ''),
+      },
+    },
+  },
 })

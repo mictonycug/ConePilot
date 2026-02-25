@@ -1,0 +1,25 @@
+Commands for the Demo 
+
+All these while you're ssh into the turtlebot
+
+Initial Setup
+cd ~/turtlebot3_ws
+colcon build --packages-select uwb_localization --symlink-install
+source install/setup.bash
+
+Keep this running on in terminal
+ros2 launch turtlebot3_bringup robot.launch.py usb_port:=/dev/serial/by-id/usb-ROBOTIS_OpenCR_Virtual_ComPort_in_FS_Mode_FFFFFFFEFFFF-if00
+
+On New terminal window (Localization - Coordinates Publishing)
+cd ~/turtlebot3_ws && source install/setup.bash
+ros2 run uwb_localization uwb_node
+
+On New terminal window (Control/Navigation Log)
+cd ~/turtlebot3_ws && source install/setup.bash
+ros2 run uwb_localization uwb_nav
+
+On New terminal window (Control/Navigation - Publishing a new goal coordinates)
+ros2 topic pub --once /goal_pose geometry_msgs/PoseStamped "{header: {frame_id: 'map'}, pose: {position: {x: 1.5, y: 1.5, z: 0.0}, orientation: {w: 1.0}}}"
+
+
+ros2 topic pub --once /goal_pose geometry_msgs/PoseStamped "{header: {frame_id: 'map'}, pose: {position: {x: 2.0, y: 2.0, z: 0.0}, orientation: {w: 1.0}}}"
