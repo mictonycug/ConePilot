@@ -23,3 +23,22 @@ ros2 topic pub --once /goal_pose geometry_msgs/PoseStamped "{header: {frame_id: 
 
 
 ros2 topic pub --once /goal_pose geometry_msgs/PoseStamped "{header: {frame_id: 'map'}, pose: {position: {x: 2.0, y: 2.0, z: 0.0}, orientation: {w: 1.0}}}"
+
+
+cd ~/turtlebot3_ws
+colcon build --packages-select uwb_localization --symlink-install
+source install/setup.bash
+
+
+ros2 launch turtlebot3_bringup robot.launch.py usb_port:=/dev/serial/by-id/usb-ROBOTIS_OpenCR_Virtual_ComPort_in_FS_Mode_FFFFFFFEFFFF-if00
+
+
+cd ~/turtlebot3_ws && source install/setup.bash
+ros2 run uwb_localization uwb_node
+
+
+cd ~/turtlebot3_ws && source install/setup.bash
+ros2 run uwb_localization uwb_nav
+
+
+ros2 topic pub --once /goal_pose geometry_msgs/PoseStamped "{header: {frame_id: 'map'}, pose: {position: {x: 1.5, y: 1.5, z: 0.0}, orientation: {w: 1.0}}}"

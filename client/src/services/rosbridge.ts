@@ -4,20 +4,42 @@ export interface RobotPose {
     theta: number;
 }
 
-interface RobotStatus {
+export interface ConeChaseStatus {
+    state: string;
+    cones_reached: number;
+    max_cones: number;
+    tracks: number;
+    confirmed: number;
+    visited: number;
+}
+
+export interface RobotStatus {
     connected: boolean;
-    nav_in_progress: boolean;
+    navigating: boolean;
+    calibrated: boolean;
     pose: RobotPose;
+    uwb_pose: { x: number; y: number } | null;
+    odom_pose: RobotPose;
+    waypoint_index: number;
+    waypoint_total: number;
+    waypoint_state: 'idle' | 'calibrating' | 'navigating' | 'dwelling' | 'completed';
+    dwell_remaining: number;
+    cone_chase_active: boolean;
+    cone_chase: ConeChaseStatus | null;
+    lock_on_active: boolean;
+    lock_on: { locked: boolean; distance_m?: number; bearing_deg?: number } | null;
 }
 
 type ConnectionCallback = (connected: boolean) => void;
 type PoseCallback = (pose: RobotPose) => void;
+type StatusCallback = (status: RobotStatus) => void;
 
 class RosBridge {
     private baseUrl = '';
     private pollInterval: ReturnType<typeof setInterval> | null = null;
     private onConnectionChange: ConnectionCallback | null = null;
     private onPoseUpdate: PoseCallback | null = null;
+    private onStatusUpdate: StatusCallback | null = null;
 
     private _connected = false;
 
@@ -26,9 +48,11 @@ class RosBridge {
     setCallbacks(cbs: {
         onConnectionChange?: ConnectionCallback;
         onPoseUpdate?: PoseCallback;
+        onStatusUpdate?: StatusCallback;
     }) {
         if (cbs.onConnectionChange) this.onConnectionChange = cbs.onConnectionChange;
         if (cbs.onPoseUpdate) this.onPoseUpdate = cbs.onPoseUpdate;
+        if (cbs.onStatusUpdate) this.onStatusUpdate = cbs.onStatusUpdate;
     }
 
     async connect(url: string): Promise<void> {
@@ -47,16 +71,17 @@ class RosBridge {
         this._connected = true;
         this.onConnectionChange?.(true);
 
-        // Poll odom at 5Hz
+        // Poll status at 5Hz (includes pose + mission progress)
         this.pollInterval = setInterval(async () => {
             try {
-                const res = await fetch(`${this.baseUrl}/odom`);
+                const res = await fetch(`${this.baseUrl}/status`);
                 if (res.ok) {
-                    const pose: RobotPose = await res.json();
-                    this.onPoseUpdate?.(pose);
+                    const status: RobotStatus = await res.json();
+                    this.onPoseUpdate?.(status.pose);
+                    this.onStatusUpdate?.(status);
                 }
             } catch (e) {
-                console.warn('[RosBridge] Odom poll failed, disconnecting:', e);
+                console.warn('[RosBridge] Status poll failed, disconnecting:', e);
                 this._connected = false;
                 this.onConnectionChange?.(false);
                 this.disconnect();
@@ -87,13 +112,13 @@ class RosBridge {
         }
     }
 
-    async sendWaypoints(waypoints: { x: number; y: number }[]): Promise<boolean> {
+    async sendWaypoints(waypoints: { x: number; y: number }[], dwellTime?: number): Promise<boolean> {
         if (!this._connected) return false;
         try {
             const res = await fetch(`${this.baseUrl}/waypoints`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ waypoints }),
+                body: JSON.stringify({ waypoints, dwell_time: dwellTime ?? 0 }),
             });
             return res.ok;
         } catch {
@@ -117,6 +142,56 @@ class RosBridge {
     async stop(): Promise<void> {
         if (!this._connected) return;
         await fetch(`${this.baseUrl}/stop`, { method: 'POST' }).catch(() => {});
+    }
+
+    async startConeChase(maxCones?: number, camera?: number): Promise<boolean> {
+        if (!this._connected) return false;
+        try {
+            const res = await fetch(`${this.baseUrl}/cone-chase/start`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ max_cones: maxCones ?? 0, camera: camera ?? 0 }),
+            });
+            return res.ok;
+        } catch {
+            return false;
+        }
+    }
+
+    async stopConeChase(): Promise<boolean> {
+        if (!this._connected) return false;
+        try {
+            const res = await fetch(`${this.baseUrl}/cone-chase/stop`, {
+                method: 'POST',
+            });
+            return res.ok;
+        } catch {
+            return false;
+        }
+    }
+
+    async startLockOn(): Promise<boolean> {
+        if (!this._connected) return false;
+        try {
+            const res = await fetch(`${this.baseUrl}/lock-on/start`, {
+                method: 'POST',
+            });
+            return res.ok;
+        } catch {
+            return false;
+        }
+    }
+
+    async stopLockOn(): Promise<boolean> {
+        if (!this._connected) return false;
+        try {
+            const res = await fetch(`${this.baseUrl}/lock-on/stop`, {
+                method: 'POST',
+            });
+            return res.ok;
+        } catch {
+            return false;
+        }
     }
 
     async getStatus(): Promise<RobotStatus | null> {
