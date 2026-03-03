@@ -1,7 +1,8 @@
 
 import { create } from 'zustand';
 import { api } from '../lib/api';
-import { rosBridge, type RobotPose } from '../services/rosbridge';
+import { rosBridge, type RobotPose, type RobotStatus } from '../services/rosbridge';
+import { calculateOptimalPath } from '../services/tsp';
 
 export const SessionStatus = {
     SETUP: 'SETUP',
@@ -84,6 +85,44 @@ interface SessionState {
     disconnectRobot: () => void;
     sendWaypointsToRobot: () => void;
     stopRobot: () => void;
+
+    // Mission State
+    missionActive: boolean;
+    missionConeIds: Set<string>;
+    missionDwellTime: number;
+    missionWaypointIndex: number;
+    missionWaypointTotal: number;
+    missionWaypointState: 'idle' | 'calibrating' | 'navigating' | 'dwelling' | 'completed';
+    missionDwellRemaining: number;
+
+    // Mission Actions
+    toggleMissionCone: (coneId: string) => void;
+    setMissionDwellTime: (seconds: number) => void;
+    startMission: () => void;
+    clearMissionSelection: () => void;
+    selectAllConesForMission: () => void;
+    stopMission: () => void;
+
+    // Cone Chase State
+    coneChaseActive: boolean;
+    coneChaseState: string | null;
+    coneChaseReached: number;
+    coneChaseMax: number;
+
+    // Cone Chase Actions
+    startConeChase: (maxCones?: number) => void;
+    stopConeChase: () => void;
+    setConeChaseMax: (n: number) => void;
+
+    // Lock-on State
+    lockOnActive: boolean;
+    lockOnLocked: boolean;
+    lockOnDistance: number | null;
+    lockOnBearing: number | null;
+
+    // Lock-on Actions
+    startLockOn: () => void;
+    stopLockOn: () => void;
 }
 
 export const useSessionStore = create<SessionState>((set) => ({
@@ -110,6 +149,27 @@ export const useSessionStore = create<SessionState>((set) => ({
     robotUrl: '/robot',
     robotPose: null,
     isConnecting: false,
+
+    // Cone Chase State
+    coneChaseActive: false,
+    coneChaseState: null,
+    coneChaseReached: 0,
+    coneChaseMax: 0,
+
+    // Lock-on State
+    lockOnActive: false,
+    lockOnLocked: false,
+    lockOnDistance: null,
+    lockOnBearing: null,
+
+    // Mission State
+    missionActive: false,
+    missionConeIds: new Set<string>(),
+    missionDwellTime: 3,
+    missionWaypointIndex: 0,
+    missionWaypointTotal: 0,
+    missionWaypointState: 'idle',
+    missionDwellRemaining: 0,
 
     loadSessions: async () => {
         set({ isLoading: true });
@@ -279,10 +339,33 @@ export const useSessionStore = create<SessionState>((set) => ({
             rosBridge.setCallbacks({
                 onConnectionChange: (connected) => {
                     set({ robotConnected: connected });
-                    if (!connected) set({ robotPose: null });
+                    if (!connected) set({ robotPose: null, missionActive: false, coneChaseActive: false, coneChaseState: null, lockOnActive: false, lockOnLocked: false, lockOnDistance: null, lockOnBearing: null });
                 },
                 onPoseUpdate: (pose) => {
                     set({ robotPose: pose });
+                },
+                onStatusUpdate: (status: RobotStatus) => {
+                    set({
+                        missionWaypointIndex: status.waypoint_index,
+                        missionWaypointTotal: status.waypoint_total,
+                        missionWaypointState: status.waypoint_state,
+                        missionDwellRemaining: status.dwell_remaining,
+                        coneChaseActive: status.cone_chase_active,
+                        coneChaseState: status.cone_chase?.state ?? null,
+                        coneChaseReached: status.cone_chase?.cones_reached ?? 0,
+                        lockOnActive: status.lock_on_active,
+                        lockOnLocked: status.lock_on?.locked ?? false,
+                        lockOnDistance: status.lock_on?.distance_m ?? null,
+                        lockOnBearing: status.lock_on?.bearing_deg ?? null,
+                    });
+                    // Auto-detect mission completion
+                    if (status.waypoint_state === 'completed') {
+                        set({ missionActive: false });
+                    }
+                    // Auto-detect cone chase completion
+                    if (!status.cone_chase_active) {
+                        set({ coneChaseActive: false });
+                    }
                 },
             });
             await rosBridge.connect(url);
@@ -317,5 +400,99 @@ export const useSessionStore = create<SessionState>((set) => ({
     stopRobot: () => {
         rosBridge.stop();
         set({ isSimulating: false, simulationStatus: 'IDLE' });
+    },
+
+    // Mission Actions
+    toggleMissionCone: (coneId: string) => {
+        set(state => {
+            const next = new Set(state.missionConeIds);
+            if (next.has(coneId)) {
+                next.delete(coneId);
+            } else {
+                next.add(coneId);
+            }
+            return { missionConeIds: next };
+        });
+    },
+
+    setMissionDwellTime: (seconds: number) => {
+        set({ missionDwellTime: Math.max(0, seconds) });
+    },
+
+    startMission: async () => {
+        const state = useSessionStore.getState();
+        if (!state.robotConnected || state.missionConeIds.size === 0 || !state.currentSession) return;
+
+        // Get selected cones
+        const selectedCones = state.currentSession.cones
+            .filter(c => state.missionConeIds.has(c.id))
+            .map(c => ({ id: c.id, x: c.x, y: c.y }));
+
+        if (selectedCones.length === 0) return;
+
+        // TSP optimize from robot's current position (or origin)
+        const startPos = state.robotPose
+            ? { id: 'start', x: state.robotPose.x, y: state.robotPose.y }
+            : { id: 'start', x: 0, y: 0 };
+
+        const ordered = calculateOptimalPath(selectedCones, startPos);
+        const waypoints = ordered.map(p => ({ x: p.x, y: p.y }));
+
+        set({ missionActive: true });
+
+        const success = await rosBridge.sendWaypoints(waypoints, state.missionDwellTime);
+        if (!success) {
+            set({ missionActive: false });
+        }
+    },
+
+    clearMissionSelection: () => {
+        set({ missionConeIds: new Set<string>() });
+    },
+
+    selectAllConesForMission: () => {
+        const state = useSessionStore.getState();
+        if (!state.currentSession) return;
+        set({ missionConeIds: new Set(state.currentSession.cones.map(c => c.id)) });
+    },
+
+    stopMission: () => {
+        rosBridge.stop();
+        set({ missionActive: false });
+    },
+
+    // Cone Chase Actions
+    startConeChase: async (maxCones?: number) => {
+        const state = useSessionStore.getState();
+        if (!state.robotConnected || state.missionActive) return;
+        const cones = maxCones ?? state.coneChaseMax;
+        const success = await rosBridge.startConeChase(cones);
+        if (success) {
+            set({ coneChaseActive: true });
+        }
+    },
+
+    stopConeChase: async () => {
+        await rosBridge.stopConeChase();
+        set({ coneChaseActive: false, coneChaseState: null, coneChaseReached: 0 });
+    },
+
+    setConeChaseMax: (n: number) => {
+        set({ coneChaseMax: Math.max(0, n) });
+    },
+
+    // Lock-on Actions
+    startLockOn: async () => {
+        const state = useSessionStore.getState();
+        if (!state.robotConnected || state.missionActive || state.coneChaseActive) return;
+        const success = await rosBridge.startLockOn();
+        if (success) {
+            set({ lockOnActive: true });
+        }
+    },
+
+    stopLockOn: async () => {
+        await rosBridge.stopLockOn();
+        set({ lockOnActive: false, lockOnLocked: false, lockOnDistance: null, lockOnBearing: null });
     },
 }));

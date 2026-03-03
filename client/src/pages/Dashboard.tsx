@@ -4,18 +4,16 @@ import { Plus, Trash2, Pencil, X } from 'lucide-react';
 import { useSessionStore } from '../store/useSessionStore';
 import { useNavigate } from 'react-router-dom';
 
+const LOCKED_FIELD_WIDTH = 3.5;
+const LOCKED_FIELD_HEIGHT = 3.0;
+
 const CreateSessionModal: React.FC<{ onClose: () => void; onCreate: (name: string, w: number, h: number) => void; isLoading: boolean }> = ({ onClose, onCreate, isLoading }) => {
     const [name, setName] = useState('');
-    const [width, setWidth] = useState('3');
-    const [height, setHeight] = useState('3');
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        const w = parseFloat(width);
-        const h = parseFloat(height);
         if (!name.trim()) return;
-        if (isNaN(w) || w <= 0 || isNaN(h) || h <= 0) return;
-        onCreate(name.trim(), w, h);
+        onCreate(name.trim(), LOCKED_FIELD_WIDTH, LOCKED_FIELD_HEIGHT);
     };
 
     return (
@@ -55,7 +53,7 @@ const CreateSessionModal: React.FC<{ onClose: () => void; onCreate: (name: strin
                         />
                     </div>
 
-                    {/* Field Size */}
+                    {/* Field Size (locked) */}
                     <div>
                         <label className="block text-sm font-medium text-text-secondary mb-1.5">Field Size (metres)</label>
                         <div className="flex items-center gap-3">
@@ -63,13 +61,9 @@ const CreateSessionModal: React.FC<{ onClose: () => void; onCreate: (name: strin
                                 <div className="text-xs text-gray-400 mb-1">Width</div>
                                 <input
                                     type="number"
-                                    value={width}
-                                    onChange={(e) => setWidth(e.target.value)}
-                                    min="1"
-                                    max="100"
-                                    step="0.5"
-                                    className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
-                                    required
+                                    value={LOCKED_FIELD_WIDTH}
+                                    readOnly
+                                    className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-gray-50 text-gray-500 cursor-not-allowed"
                                 />
                             </div>
                             <span className="text-gray-400 font-medium mt-5">&times;</span>
@@ -77,17 +71,13 @@ const CreateSessionModal: React.FC<{ onClose: () => void; onCreate: (name: strin
                                 <div className="text-xs text-gray-400 mb-1">Height</div>
                                 <input
                                     type="number"
-                                    value={height}
-                                    onChange={(e) => setHeight(e.target.value)}
-                                    min="1"
-                                    max="100"
-                                    step="0.5"
-                                    className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
-                                    required
+                                    value={LOCKED_FIELD_HEIGHT}
+                                    readOnly
+                                    className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-gray-50 text-gray-500 cursor-not-allowed"
                                 />
                             </div>
                         </div>
-                        <p className="text-xs text-gray-400 mt-2">The robot starts at the bottom-left corner (0, 0).</p>
+                        <p className="text-xs text-gray-400 mt-2">Locked to UWB anchor layout. Robot starts at (0, 0).</p>
                     </div>
 
                     {/* Actions */}

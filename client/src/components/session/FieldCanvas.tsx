@@ -1,9 +1,8 @@
-import React, { useRef, useState, useEffect, useMemo } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { Stage, Layer, Rect, Line, Text, Image as KonvaImage, Group } from 'react-konva';
 import useImage from 'use-image';
 import { useSessionStore } from '../../store/useSessionStore';
 import { ConeNode } from './ConeNode';
-import { RobotNode } from './RobotNode';
 import { Grid3x3 } from 'lucide-react';
 
 interface FieldCanvasProps {
@@ -11,11 +10,12 @@ interface FieldCanvasProps {
     height: number;
 }
 
-const SCALE = 40; // 40px/m
-const ZOOM_STEP = 0.5;
+const SCALE = 120; // 120px/m — high resolution for small fields
+const ZOOM_STEP = 0.25;
 const MIN_ZOOM = 1;
-const MAX_ZOOM = 4;
-const SNAP_OPTIONS = [0, 0.25, 0.5, 1];
+const MAX_ZOOM = 5;
+const SNAP_OPTIONS = [0, 0.1, 0.25, 0.5];
+const BOUNDARY_MARGIN = 0.5; // 50cm margin from field edges
 
 const snapVal = (v: number, size: number) => size > 0 ? Math.round(v / size) * size : v;
 
@@ -37,7 +37,7 @@ const ConeImage = ({ x, y, opacity = 1, rotation = 0, size = 30 }: { x: number, 
 };
 
 export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height: _height }) => {
-    const { currentSession, addCone, updateConePosition, removeCone, optimizedPath, isSimulating, robotPose, robotConnected } = useSessionStore();
+    const { currentSession, addCone, updateConePosition, removeCone, optimizedPath, robotPose, robotConnected, missionConeIds, toggleMissionCone } = useSessionStore();
     const stageRef = useRef<any>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [mousePos, setMousePos] = useState<{ x: number, y: number } | null>(null);
@@ -88,8 +88,8 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
     // Scale-aware stroke: divide by fitScale so strokes look consistent regardless of zoom level
     const strokeScale = 1 / fitScale;
 
-    // Cone size: target ~30px visual on screen, but never exceed 0.3m in field coords
-    const coneSize = Math.max(8, Math.min(30 / fitScale, 0.3 * SCALE));
+    // Cone size: real cone base is ~15cm diameter, render to scale
+    const coneSize = 0.15 * SCALE;
 
     const actualScale = zoom * fitScale;
     const scaledWidth = totalWidth * actualScale;
@@ -152,10 +152,21 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
         const rawX = canvasX;
         const rawY = fH - canvasY;
 
+        // Clamp to boundary margin zone for cone placement
+        const minX = BOUNDARY_MARGIN;
+        const maxX = fW - BOUNDARY_MARGIN;
+        const minY = BOUNDARY_MARGIN;
+        const maxY = fH - BOUNDARY_MARGIN;
+
         if (rawX >= 0 && rawX <= fW && rawY >= 0 && rawY <= fH) {
+            const clampedX = Math.max(minX, Math.min(maxX, rawX));
+            const clampedY = Math.max(minY, Math.min(maxY, rawY));
             return {
-                raw: { x: rawX, y: rawY },
-                snapped: { x: snapVal(rawX, snapSize), y: snapVal(rawY, snapSize) },
+                raw: { x: clampedX, y: clampedY },
+                snapped: {
+                    x: Math.max(minX, Math.min(maxX, snapVal(clampedX, snapSize))),
+                    y: Math.max(minY, Math.min(maxY, snapVal(clampedY, snapSize))),
+                },
             };
         }
         return null;
@@ -170,7 +181,6 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
 
     const handleStageClick = (e: any) => {
         if (e.target.attrs.draggable || e.target.parent?.attrs.draggable) return;
-        if (isSimulating) return;
 
         const stage = e.target.getStage();
         if (!stage) return;
@@ -193,16 +203,25 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
     const gridLines = [];
     const labels = [];
 
-    // Sub-grid lines (0.5m intervals)
+    // Fine sub-grid lines (0.25m intervals) for small fields
     if (showSubGrid) {
-        for (let i = 0.5; i < fW; i += 1) {
+        for (let i = 0.25; i < fW; i += 0.25) {
+            // Skip whole-meter lines (drawn separately as major/minor)
+            if (Math.abs(i - Math.round(i)) < 0.01) continue;
+            const isHalf = Math.abs((i % 1) - 0.5) < 0.01;
             gridLines.push(
-                <Line key={`sv${i}`} points={[i * SCALE, 0, i * SCALE, fieldHeightPx]} stroke="#F0F0F0" strokeWidth={Math.max(0.5, 0.5 * strokeScale)} />
+                <Line key={`sv${i}`} points={[i * SCALE, 0, i * SCALE, fieldHeightPx]}
+                    stroke={isHalf ? "#E8E8EC" : "#F0F0F3"}
+                    strokeWidth={Math.max(0.3, (isHalf ? 0.5 : 0.3) * strokeScale)} />
             );
         }
-        for (let i = 0.5; i < fH; i += 1) {
+        for (let i = 0.25; i < fH; i += 0.25) {
+            if (Math.abs(i - Math.round(i)) < 0.01) continue;
+            const isHalf = Math.abs((i % 1) - 0.5) < 0.01;
             gridLines.push(
-                <Line key={`sh${i}`} points={[0, i * SCALE, fieldWidthPx, i * SCALE]} stroke="#F0F0F0" strokeWidth={Math.max(0.5, 0.5 * strokeScale)} />
+                <Line key={`sh${i}`} points={[0, i * SCALE, fieldWidthPx, i * SCALE]}
+                    stroke={isHalf ? "#E8E8EC" : "#F0F0F3"}
+                    strokeWidth={Math.max(0.3, (isHalf ? 0.5 : 0.3) * strokeScale)} />
             );
         }
     }
@@ -227,17 +246,12 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
     // Path Line Points (flip Y for canvas)
     const pathPoints = optimizedPath.flatMap(p => [p.x * SCALE, fieldToCanvasY(p.y)]);
 
-    // Pre-transform path for RobotNode (flip Y into canvas field coords)
-    // Memoized so the reference stays stable and doesn't restart the animation on every render
-    const robotPath = useMemo(
-        () => isSimulating ? optimizedPath.map(p => ({ x: p.x, y: fH - p.y })) : [],
-        [isSimulating, optimizedPath, fH]
-    );
-
     const stageWidth = containerSize.width || totalWidth;
     const stageHeight = containerSize.height || totalHeight;
 
-    const snapLabel = snapSize > 0 ? `${snapSize}m` : 'OFF';
+    const snapLabel = snapSize > 0
+        ? (snapSize < 1 ? `${Math.round(snapSize * 100)}cm` : `${snapSize}m`)
+        : 'OFF';
 
     return (
         <div
@@ -266,8 +280,42 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
             >
                 <Layer x={PADDING} y={PADDING}>
                     <Rect width={fieldWidthPx} height={fieldHeightPx} fill="#F4F4F5" stroke="#D4D4D8" strokeWidth={Math.max(0.5, 1 * strokeScale)} />
+
+                    {/* Boundary margin zone (50cm from edges) */}
+                    {(() => {
+                        const m = BOUNDARY_MARGIN * SCALE;
+                        return (
+                            <>
+                                {/* Top margin */}
+                                <Rect x={0} y={0} width={fieldWidthPx} height={m} fill="#E5E5E5" opacity={0.4} listening={false} />
+                                {/* Bottom margin */}
+                                <Rect x={0} y={fieldHeightPx - m} width={fieldWidthPx} height={m} fill="#E5E5E5" opacity={0.4} listening={false} />
+                                {/* Left margin */}
+                                <Rect x={0} y={m} width={m} height={fieldHeightPx - 2 * m} fill="#E5E5E5" opacity={0.4} listening={false} />
+                                {/* Right margin */}
+                                <Rect x={fieldWidthPx - m} y={m} width={m} height={fieldHeightPx - 2 * m} fill="#E5E5E5" opacity={0.4} listening={false} />
+                                {/* Inner boundary line */}
+                                <Rect x={m} y={m} width={fieldWidthPx - 2 * m} height={fieldHeightPx - 2 * m} fill="transparent" stroke="#D4D4D8" strokeWidth={Math.max(0.5, 0.5 * strokeScale)} dash={[4, 4]} listening={false} />
+                            </>
+                        );
+                    })()}
+
                     {gridLines}
                     {labels}
+
+                    {/* Center crosshair */}
+                    {(() => {
+                        const cx = fieldWidthPx / 2;
+                        const cy = fieldHeightPx / 2;
+                        const arm = 0.15 * SCALE; // 15cm arms
+                        const sw = Math.max(0.5, 0.75 * strokeScale);
+                        return (
+                            <>
+                                <Line points={[cx - arm, cy, cx + arm, cy]} stroke="#A1A1AA" strokeWidth={sw} listening={false} />
+                                <Line points={[cx, cy - arm, cx, cy + arm]} stroke="#A1A1AA" strokeWidth={sw} listening={false} />
+                            </>
+                        );
+                    })()}
 
                     {/* Path Lines */}
                     {pathPoints.length > 0 && (
@@ -289,43 +337,48 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
                             cone={cone}
                             scale={SCALE}
                             fieldHeight={fH}
+                            fieldWidth={fW}
                             snapSize={snapSize}
                             coneSize={coneSize}
                             onDragEnd={(id, x, y) => updateConePosition(currentSession.id, id, x, y)}
                             onDelete={(id) => removeCone(currentSession.id, id)}
                             imageMode={true}
                             opacity={0.8}
+                            isSelected={missionConeIds.has(cone.id)}
+                            onToggleSelect={robotConnected ? toggleMissionCone : undefined}
                         />
                     ))}
 
-                    {/* Robot Layer (On Top) — path is pre-flipped to canvas coords */}
-                    <RobotNode
-                        x={0}
-                        y={fH}
-                        scale={SCALE}
-                        path={robotPath}
-                    />
-
-                    {/* Real Robot Position Indicator */}
+                    {/* Real Robot Position */}
                     {robotPose && robotConnected && (
-                        <Group x={robotPose.x * SCALE} y={robotPose.y * SCALE}>
+                        <Group
+                            x={robotPose.x * SCALE}
+                            y={fieldToCanvasY(robotPose.y)}
+                            rotation={-robotPose.theta * (180 / Math.PI)}
+                        >
+                            {/* Robot body */}
                             <Rect
-                                width={16}
-                                height={16}
-                                offsetX={8}
-                                offsetY={8}
+                                width={12}
+                                height={12}
+                                offsetX={6}
+                                offsetY={6}
                                 fill="#3B82F6"
-                                rotation={robotPose.theta * (180 / Math.PI)}
-                                cornerRadius={3}
-                                shadowBlur={6}
+                                cornerRadius={6}
+                                shadowBlur={4}
                                 shadowOpacity={0.4}
-                                shadowColor="#3B82F6"
+                                shadowColor="#1D4ED8"
+                            />
+                            {/* Front direction indicator */}
+                            <Line
+                                points={[2, -3, 9, 0, 2, 3]}
+                                fill="#93C5FD"
+                                closed={true}
                             />
                         </Group>
                     )}
 
                     {/* Ghost Cone Cursor (mousePos is in field coords, convert to canvas) */}
-                    {mousePos && !isSimulating && (
+                    {mousePos && (
                         <Group x={mousePos.x * SCALE} y={fieldToCanvasY(mousePos.y)} opacity={0.6} listening={false}>
                             <ConeImage x={0} y={0} size={coneSize} />
                         </Group>
