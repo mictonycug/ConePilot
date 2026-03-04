@@ -14,7 +14,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/robot': {
-        target: 'http://172.20.10.3:8888',
+        target: 'http://172.20.10.6:8888',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/robot/, ''),
       },

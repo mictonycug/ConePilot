@@ -5,6 +5,7 @@ import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
 import { Dashboard } from './pages/Dashboard';
 import { SessionView } from './pages/SessionView';
+import { OnboardingPage } from './pages/OnboardingPage';
 import { AuthGuard } from './components/auth/AuthGuard';
 
 function App() {
@@ -23,6 +24,14 @@ function App() {
             element={
               <AuthGuard>
                 <Dashboard />
+              </AuthGuard>
+            }
+          />
+          <Route
+            path="/onboarding"
+            element={
+              <AuthGuard>
+                <OnboardingPage />
               </AuthGuard>
             }
           />

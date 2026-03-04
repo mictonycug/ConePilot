@@ -15,7 +15,7 @@ export const RegisterPage: React.FC = () => {
         setError('');
         try {
             await register(email, password, name);
-            nav('/dashboard');
+            nav('/onboarding');
         } catch (err: any) {
             setError(err.response?.data?.message || 'Registration failed');
         }

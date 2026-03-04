@@ -1,9 +1,54 @@
-import React, { useRef, useState, useEffect } from 'react';
-import { Stage, Layer, Rect, Line, Text, Image as KonvaImage, Group } from 'react-konva';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
+import { Stage, Layer, Rect, Line, Text, Image as KonvaImage, Group, Circle } from 'react-konva';
 import useImage from 'use-image';
 import { useSessionStore } from '../../store/useSessionStore';
 import { ConeNode } from './ConeNode';
 import { Grid3x3 } from 'lucide-react';
+
+// Pulsating cone shown while placement API call is in flight
+const PlacingConeGhost = ({ x, y, size }: { x: number; y: number; size: number }) => {
+    const [image] = useImage('/cone.png');
+    const [pulse, setPulse] = useState(0);
+    const half = size / 2;
+
+    useEffect(() => {
+        let raf: number;
+        const start = performance.now();
+        const animate = (now: number) => {
+            setPulse(Math.sin((now - start) * 0.006) * 0.5 + 0.5); // 0-1 pulsation
+            raf = requestAnimationFrame(animate);
+        };
+        raf = requestAnimationFrame(animate);
+        return () => cancelAnimationFrame(raf);
+    }, []);
+
+    const ringRadius = half * (1.0 + pulse * 0.6);
+    const ringOpacity = 0.6 - pulse * 0.4;
+
+    return (
+        <Group x={x} y={y} listening={false}>
+            {/* Pulsating ring */}
+            <Circle
+                radius={ringRadius}
+                fill="transparent"
+                stroke="#F59E0B"
+                strokeWidth={2}
+                opacity={ringOpacity}
+            />
+            {/* Cone image */}
+            {image && (
+                <KonvaImage
+                    image={image}
+                    width={size}
+                    height={size}
+                    offsetX={half}
+                    offsetY={half}
+                    opacity={0.5 + pulse * 0.3}
+                />
+            )}
+        </Group>
+    );
+};
 
 interface FieldCanvasProps {
     width: number;
@@ -37,7 +82,7 @@ const ConeImage = ({ x, y, opacity = 1, rotation = 0, size = 30 }: { x: number, 
 };
 
 export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height: _height }) => {
-    const { currentSession, addCone, updateConePosition, removeCone, optimizedPath, robotPose, robotConnected, missionConeIds, toggleMissionCone } = useSessionStore();
+    const { currentSession, addCone, updateConePosition, removeCone, optimizedPath, robotPose, robotConnected, missionConeIds, toggleMissionCone, isReadOnly, isPlacingCone, pendingCone } = useSessionStore();
     const stageRef = useRef<any>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [mousePos, setMousePos] = useState<{ x: number, y: number } | null>(null);
@@ -180,6 +225,7 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
     };
 
     const handleStageClick = (e: any) => {
+        if (isReadOnly || isPlacingCone) return;
         if (e.target.attrs.draggable || e.target.parent?.attrs.draggable) return;
 
         const stage = e.target.getStage();
@@ -346,8 +392,18 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
                             opacity={0.8}
                             isSelected={missionConeIds.has(cone.id)}
                             onToggleSelect={robotConnected ? toggleMissionCone : undefined}
+                            readOnly={isReadOnly}
                         />
                     ))}
+
+                    {/* Placing Animation */}
+                    {pendingCone && (
+                        <PlacingConeGhost
+                            x={pendingCone.x * SCALE}
+                            y={fieldToCanvasY(pendingCone.y)}
+                            size={coneSize}
+                        />
+                    )}
 
                     {/* Real Robot Position */}
                     {robotPose && robotConnected && (
@@ -378,7 +434,7 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
                     )}
 
                     {/* Ghost Cone Cursor (mousePos is in field coords, convert to canvas) */}
-                    {mousePos && (
+                    {mousePos && !isPlacingCone && (
                         <Group x={mousePos.x * SCALE} y={fieldToCanvasY(mousePos.y)} opacity={0.6} listening={false}>
                             <ConeImage x={0} y={0} size={coneSize} />
                         </Group>
@@ -402,16 +458,16 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
             {/* Bottom-left: Snap toggle */}
             <button
                 onClick={handleCycleSnap}
-                className={`absolute bottom-3 left-3 z-10 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg shadow-md border text-xs font-medium select-none transition-colors ${
+                className={`absolute bottom-3 left-3 z-10 flex items-center gap-2 px-3.5 py-2.5 rounded-xl shadow-md border text-sm font-semibold select-none transition-colors active:scale-95 ${
                     snapSize > 0
                         ? 'bg-primary/10 border-primary/30 text-primary hover:bg-primary/20'
                         : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
                 }`}
                 title="Click to cycle snap grid"
             >
-                <Grid3x3 size={14} />
+                <Grid3x3 size={16} />
                 <span>SNAP</span>
-                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                <span className={`px-2 py-0.5 rounded-md text-xs font-bold ${
                     snapSize > 0 ? 'bg-primary/20 text-primary' : 'bg-gray-100 text-gray-400'
                 }`}>
                     {snapLabel}
@@ -419,24 +475,24 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
             </button>
 
             {/* Bottom-right: Zoom controls */}
-            <div className="absolute bottom-3 right-3 flex flex-col gap-1.5 z-10">
+            <div className="absolute bottom-3 right-3 flex flex-col gap-2 z-10">
                 <button
                     onClick={handleZoomIn}
                     disabled={zoom >= MAX_ZOOM}
-                    className="w-10 h-10 bg-white border border-gray-300 rounded-lg shadow-md flex items-center justify-center text-xl font-bold text-gray-700 hover:bg-gray-50 active:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors select-none"
+                    className="w-12 h-12 bg-white border border-gray-300 rounded-xl shadow-md flex items-center justify-center text-2xl font-bold text-gray-700 hover:bg-gray-50 active:bg-gray-100 active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed transition-all select-none"
                 >
                     +
                 </button>
                 <button
                     onClick={handleZoomOut}
                     disabled={zoom <= MIN_ZOOM}
-                    className="w-10 h-10 bg-white border border-gray-300 rounded-lg shadow-md flex items-center justify-center text-xl font-bold text-gray-700 hover:bg-gray-50 active:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors select-none"
+                    className="w-12 h-12 bg-white border border-gray-300 rounded-xl shadow-md flex items-center justify-center text-2xl font-bold text-gray-700 hover:bg-gray-50 active:bg-gray-100 active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed transition-all select-none"
                 >
                     −
                 </button>
                 <button
                     onClick={handleFitView}
-                    className="w-10 h-10 bg-white border border-gray-300 rounded-lg shadow-md flex items-center justify-center text-xs font-bold text-gray-700 hover:bg-gray-50 active:bg-gray-100 transition-colors select-none"
+                    className="w-12 h-12 bg-white border border-gray-300 rounded-xl shadow-md flex items-center justify-center text-xs font-bold text-gray-700 hover:bg-gray-50 active:bg-gray-100 active:scale-95 transition-all select-none"
                     title="Fit to view"
                 >
                     FIT
