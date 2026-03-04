@@ -18,9 +18,10 @@ interface ConeNodeProps {
     coneSize?: number; // pixel diameter of the cone visual (in canvas coords)
     isSelected?: boolean;
     onToggleSelect?: (id: string) => void;
+    readOnly?: boolean;
 }
 
-export const ConeNode: React.FC<ConeNodeProps> = ({ cone, scale, fieldHeight, fieldWidth, onDragEnd, onDelete, imageMode, opacity = 1, snapSize = 0, coneSize = 34, isSelected, onToggleSelect }) => {
+export const ConeNode: React.FC<ConeNodeProps> = ({ cone, scale, fieldHeight, fieldWidth, onDragEnd, onDelete, imageMode, opacity = 1, snapSize = 0, coneSize = 34, isSelected, onToggleSelect, readOnly }) => {
     const pixelX = cone.x * scale;
     const pixelY = (fieldHeight - cone.y) * scale;
     const [image] = useImage('/cone.png');
@@ -37,7 +38,7 @@ export const ConeNode: React.FC<ConeNodeProps> = ({ cone, scale, fieldHeight, fi
             x={pixelX}
             y={pixelY}
             opacity={opacity}
-            draggable
+            draggable={!readOnly}
             onDragMove={(e) => {
                 // Clamp to boundary margin (in canvas pixel coords)
                 const minPx = BOUNDARY_MARGIN * scale;
@@ -68,6 +69,7 @@ export const ConeNode: React.FC<ConeNodeProps> = ({ cone, scale, fieldHeight, fi
             }}
             onClick={(e) => {
                 e.cancelBubble = true;
+                if (readOnly) return;
                 if (onToggleSelect) {
                     onToggleSelect(cone.id);
                 } else if (window.confirm('Delete this cone?')) {
@@ -76,6 +78,7 @@ export const ConeNode: React.FC<ConeNodeProps> = ({ cone, scale, fieldHeight, fi
             }}
             onContextMenu={(e) => {
                 e.evt.preventDefault();
+                if (readOnly) return;
                 if (onToggleSelect) {
                     onToggleSelect(cone.id);
                 } else {

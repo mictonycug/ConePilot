@@ -1,6 +1,7 @@
 
 import { create } from 'zustand';
 import { api } from '../lib/api';
+import { getSocket } from '../lib/socket';
 import { rosBridge, type RobotPose, type RobotStatus } from '../services/rosbridge';
 import { calculateOptimalPath } from '../services/tsp';
 
@@ -44,6 +45,8 @@ interface SessionState {
     deleteSession: (id: string) => Promise<void>;
     renameSession: (id: string, name: string) => Promise<void>;
     addCone: (sessionId: string, x: number, y: number) => Promise<void>;
+    isPlacingCone: boolean;
+    pendingCone: { x: number; y: number } | null;
     removeCone: (sessionId: string, coneId: string) => Promise<void>;
     removeAllCones: (sessionId: string) => Promise<void>;
     updateConePosition: (sessionId: string, coneId: string, x: number, y: number) => Promise<void>;
@@ -69,6 +72,8 @@ interface SessionState {
     robotUrl: string;
     robotPose: RobotPose | null;
     isConnecting: boolean;
+    isReadOnly: boolean;
+    robotLockHolder: string | null;
 
     setOptimizedPath: (path: { x: number, y: number }[]) => void;
     setIsSimulating: (isSimulating: boolean) => void;
@@ -129,6 +134,8 @@ export const useSessionStore = create<SessionState>((set) => ({
     sessions: [],
     currentSession: null,
     isLoading: false,
+    isPlacingCone: false,
+    pendingCone: null,
     optimizedPath: [],
     isSimulating: false,
     simulationStatus: 'IDLE',
@@ -149,6 +156,8 @@ export const useSessionStore = create<SessionState>((set) => ({
     robotUrl: '/robot',
     robotPose: null,
     isConnecting: false,
+    isReadOnly: false,
+    robotLockHolder: null,
 
     // Cone Chase State
     coneChaseActive: false,
@@ -254,17 +263,24 @@ export const useSessionStore = create<SessionState>((set) => ({
     },
 
     addCone: async (sessionId, x, y) => {
-        // Optimistic update? Maybe later. For now, simple.
-        const { data } = await api.post<{ cone: ConeData }>(`/sessions/${sessionId}/cones`, { x, y });
-        set(state => {
-            if (!state.currentSession || state.currentSession.id !== sessionId) return state;
-            return {
-                currentSession: {
-                    ...state.currentSession,
-                    cones: [...state.currentSession.cones, data.cone]
-                }
-            };
-        });
+        if (useSessionStore.getState().isPlacingCone) return;
+        set({ isPlacingCone: true, pendingCone: { x, y } });
+        try {
+            const { data } = await api.post<{ cone: ConeData }>(`/sessions/${sessionId}/cones`, { x, y });
+            set(state => {
+                if (!state.currentSession || state.currentSession.id !== sessionId) return { isPlacingCone: false, pendingCone: null };
+                return {
+                    currentSession: {
+                        ...state.currentSession,
+                        cones: [...state.currentSession.cones, data.cone]
+                    },
+                    isPlacingCone: false,
+                    pendingCone: null,
+                };
+            });
+        } catch (e) {
+            set({ isPlacingCone: false, pendingCone: null });
+        }
     },
 
     removeCone: async (sessionId, coneId) => {
@@ -369,7 +385,37 @@ export const useSessionStore = create<SessionState>((set) => ({
                 },
             });
             await rosBridge.connect(url);
-            set({ isConnecting: false });
+
+            // Request exclusive lock via Socket.io
+            const socket = getSocket();
+            const normalizedUrl = url.replace(/\/+$/, '').toLowerCase();
+
+            // Listen for lock released (other controller disconnected)
+            socket.off('robot:lock-released');
+            socket.on('robot:lock-released', (data: { robotUrl: string }) => {
+                if (data.robotUrl === normalizedUrl) {
+                    set({ robotLockHolder: null });
+                    // Don't auto-acquire — user can reconnect to get control
+                }
+            });
+
+            // Listen for lock state changes
+            socket.off('robot:lock-state');
+            socket.on('robot:lock-state', (data: { robotUrl: string; lockedBy: string }) => {
+                if (data.robotUrl === normalizedUrl) {
+                    set({ robotLockHolder: data.lockedBy });
+                }
+            });
+
+            const response = await new Promise<{ granted: boolean }>((resolve) => {
+                socket.emit('robot:lock', url, resolve);
+            });
+
+            set({
+                isConnecting: false,
+                isReadOnly: !response.granted,
+                robotLockHolder: response.granted ? socket.id ?? null : 'other',
+            });
         } catch (e) {
             console.error('[RosBridge] Connection failed:', e);
             set({ isConnecting: false, robotConnected: false });
@@ -377,12 +423,21 @@ export const useSessionStore = create<SessionState>((set) => ({
     },
 
     disconnectRobot: () => {
+        const state = useSessionStore.getState();
+        // Release lock if we held it
+        if (!state.isReadOnly && state.robotConnected) {
+            const socket = getSocket();
+            socket.emit('robot:unlock', state.robotUrl);
+            socket.off('robot:lock-released');
+            socket.off('robot:lock-state');
+        }
         rosBridge.disconnect();
-        set({ robotConnected: false, robotPose: null });
+        set({ robotConnected: false, robotPose: null, isReadOnly: false, robotLockHolder: null });
     },
 
     sendWaypointsToRobot: async () => {
         const state = useSessionStore.getState();
+        if (state.isReadOnly) return;
         if (!state.robotConnected || state.optimizedPath.length === 0) return;
 
         // Skip the first point (0,0 start) — send cone waypoints
@@ -398,6 +453,7 @@ export const useSessionStore = create<SessionState>((set) => ({
     },
 
     stopRobot: () => {
+        if (useSessionStore.getState().isReadOnly) return;
         rosBridge.stop();
         set({ isSimulating: false, simulationStatus: 'IDLE' });
     },
@@ -421,6 +477,7 @@ export const useSessionStore = create<SessionState>((set) => ({
 
     startMission: async () => {
         const state = useSessionStore.getState();
+        if (state.isReadOnly) return;
         if (!state.robotConnected || state.missionConeIds.size === 0 || !state.currentSession) return;
 
         // Get selected cones
@@ -457,6 +514,7 @@ export const useSessionStore = create<SessionState>((set) => ({
     },
 
     stopMission: () => {
+        if (useSessionStore.getState().isReadOnly) return;
         rosBridge.stop();
         set({ missionActive: false });
     },
@@ -464,6 +522,7 @@ export const useSessionStore = create<SessionState>((set) => ({
     // Cone Chase Actions
     startConeChase: async (maxCones?: number) => {
         const state = useSessionStore.getState();
+        if (state.isReadOnly) return;
         if (!state.robotConnected || state.missionActive) return;
         const cones = maxCones ?? state.coneChaseMax;
         const success = await rosBridge.startConeChase(cones);
@@ -473,6 +532,7 @@ export const useSessionStore = create<SessionState>((set) => ({
     },
 
     stopConeChase: async () => {
+        if (useSessionStore.getState().isReadOnly) return;
         await rosBridge.stopConeChase();
         set({ coneChaseActive: false, coneChaseState: null, coneChaseReached: 0 });
     },
@@ -484,6 +544,7 @@ export const useSessionStore = create<SessionState>((set) => ({
     // Lock-on Actions
     startLockOn: async () => {
         const state = useSessionStore.getState();
+        if (state.isReadOnly) return;
         if (!state.robotConnected || state.missionActive || state.coneChaseActive) return;
         const success = await rosBridge.startLockOn();
         if (success) {
@@ -492,6 +553,7 @@ export const useSessionStore = create<SessionState>((set) => ({
     },
 
     stopLockOn: async () => {
+        if (useSessionStore.getState().isReadOnly) return;
         await rosBridge.stopLockOn();
         set({ lockOnActive: false, lockOnLocked: false, lockOnDistance: null, lockOnBearing: null });
     },

@@ -1,7 +1,7 @@
 import axios from 'axios';
 
-// Defaults to localhost:3001 if env var is missing (common in dev)
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+// Use the current hostname so external devices (e.g. phone on same network) hit the right server
+const API_URL = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:3001/api`;
 
 export const api = axios.create({
     baseURL: API_URL,
