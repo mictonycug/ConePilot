@@ -91,6 +91,15 @@ interface SessionState {
     sendWaypointsToRobot: () => void;
     stopRobot: () => void;
 
+    // Debug Mode
+    debugMode: boolean;
+    debugWaypointIndex: number;
+    debugIntervalId: number | null;
+    setDebugMode: (enabled: boolean) => void;
+    debugAdvanceWaypoint: () => void;
+    startDebugSimulation: () => void;
+    stopDebugSimulation: () => void;
+
     // Mission State
     missionActive: boolean;
     missionConeIds: Set<string>;
@@ -130,7 +139,7 @@ interface SessionState {
     stopLockOn: () => void;
 }
 
-export const useSessionStore = create<SessionState>((set) => ({
+export const useSessionStore = create<SessionState>((set, get) => ({
     sessions: [],
     currentSession: null,
     isLoading: false,
@@ -164,6 +173,11 @@ export const useSessionStore = create<SessionState>((set) => ({
     coneChaseState: null,
     coneChaseReached: 0,
     coneChaseMax: 0,
+
+    // Debug Mode
+    debugMode: false,
+    debugWaypointIndex: 0,
+    debugIntervalId: null,
 
     // Lock-on State
     lockOnActive: false,
@@ -424,6 +438,10 @@ export const useSessionStore = create<SessionState>((set) => ({
 
     disconnectRobot: () => {
         const state = useSessionStore.getState();
+        if (state.debugMode) {
+            get().setDebugMode(false);
+            return;
+        }
         // Release lock if we held it
         if (!state.isReadOnly && state.robotConnected) {
             const socket = getSocket();
@@ -437,6 +455,7 @@ export const useSessionStore = create<SessionState>((set) => ({
 
     sendWaypointsToRobot: async () => {
         const state = useSessionStore.getState();
+        if (state.debugMode) return;
         if (state.isReadOnly) return;
         if (!state.robotConnected || state.optimizedPath.length === 0) return;
 
@@ -453,7 +472,12 @@ export const useSessionStore = create<SessionState>((set) => ({
     },
 
     stopRobot: () => {
-        if (useSessionStore.getState().isReadOnly) return;
+        const state = useSessionStore.getState();
+        if (state.isReadOnly) return;
+        if (state.debugMode) {
+            get().stopDebugSimulation();
+            return;
+        }
         rosBridge.stop();
         set({ isSimulating: false, simulationStatus: 'IDLE' });
     },
@@ -539,6 +563,141 @@ export const useSessionStore = create<SessionState>((set) => ({
 
     setConeChaseMax: (n: number) => {
         set({ coneChaseMax: Math.max(0, n) });
+    },
+
+    // Debug Mode Actions
+    setDebugMode: (enabled: boolean) => {
+        if (enabled) {
+            set({
+                debugMode: true,
+                robotConnected: true,
+                robotPose: { x: 0, y: 0, theta: 0 },
+            });
+        } else {
+            const state = get();
+            if (state.debugIntervalId !== null) {
+                clearInterval(state.debugIntervalId);
+            }
+            set({
+                debugMode: false,
+                robotConnected: false,
+                robotPose: null,
+                isSimulating: false,
+                simulationStatus: 'IDLE',
+                debugWaypointIndex: 0,
+                debugIntervalId: null,
+            });
+        }
+    },
+
+    startDebugSimulation: () => {
+        const state = get();
+        const path = state.optimizedPath;
+        if (path.length === 0) return;
+
+        set({
+            isSimulating: true,
+            simulationStatus: 'MOVING',
+            debugWaypointIndex: 0,
+            simulationStats: { conesPlaced: 0, distanceTraveled: 0, etaSeconds: 0 },
+        });
+
+        const SPEED = 2; // m/s
+        const TICK_MS = 50;
+        const stepDist = SPEED * (TICK_MS / 1000);
+
+        const id = window.setInterval(() => {
+            const s = get();
+            const idx = s.debugWaypointIndex;
+            if (idx >= path.length) {
+                clearInterval(s.debugIntervalId!);
+                set({ isSimulating: false, simulationStatus: 'COMPLETED', debugIntervalId: null });
+                return;
+            }
+
+            const target = path[idx];
+            const pose = s.robotPose ?? { x: 0, y: 0, theta: 0 };
+            const dx = target.x - pose.x;
+            const dy = target.y - pose.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist < 0.05) {
+                // Reached waypoint
+                const nextIdx = idx + 1;
+                // Count placed cones (skip index 0 which is the start position)
+                const conesPlaced = idx >= 1 ? idx : 0;
+                set({
+                    debugWaypointIndex: nextIdx,
+                    robotPose: { x: target.x, y: target.y, theta: Math.atan2(dy, dx) },
+                    simulationStats: { ...s.simulationStats, conesPlaced },
+                });
+                if (nextIdx >= path.length) {
+                    clearInterval(s.debugIntervalId!);
+                    set({
+                        isSimulating: false,
+                        simulationStatus: 'COMPLETED',
+                        debugIntervalId: null,
+                        simulationStats: { ...s.simulationStats, conesPlaced: path.length - 1 },
+                    });
+                }
+                return;
+            }
+
+            // Lerp toward target
+            const ratio = stepDist / dist;
+            const nx = pose.x + dx * ratio;
+            const ny = pose.y + dy * ratio;
+            set({
+                robotPose: { x: nx, y: ny, theta: Math.atan2(dy, dx) },
+                simulationStats: {
+                    ...s.simulationStats,
+                    distanceTraveled: s.simulationStats.distanceTraveled + stepDist,
+                },
+            });
+        }, TICK_MS);
+
+        set({ debugIntervalId: id });
+    },
+
+    stopDebugSimulation: () => {
+        const state = get();
+        if (state.debugIntervalId !== null) {
+            clearInterval(state.debugIntervalId);
+        }
+        set({
+            isSimulating: false,
+            simulationStatus: 'IDLE',
+            debugIntervalId: null,
+        });
+    },
+
+    debugAdvanceWaypoint: () => {
+        const state = get();
+        const path = state.optimizedPath;
+        const idx = state.debugWaypointIndex;
+        if (idx >= path.length) return;
+
+        const target = path[idx];
+        const nextIdx = idx + 1;
+        const conesPlaced = idx >= 1 ? idx : 0;
+
+        set({
+            robotPose: { x: target.x, y: target.y, theta: 0 },
+            debugWaypointIndex: nextIdx,
+            simulationStats: { ...state.simulationStats, conesPlaced },
+        });
+
+        if (nextIdx >= path.length) {
+            if (state.debugIntervalId !== null) {
+                clearInterval(state.debugIntervalId);
+            }
+            set({
+                isSimulating: false,
+                simulationStatus: 'COMPLETED',
+                debugIntervalId: null,
+                simulationStats: { ...state.simulationStats, conesPlaced: path.length - 1 },
+            });
+        }
     },
 
     // Lock-on Actions
