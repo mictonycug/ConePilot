@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, Square, Trash2, Wifi, WifiOff, Bot, Target, Clock, CheckCircle2, Eye, Camera, CameraOff, Crosshair, ChevronDown, Gamepad2, Navigation, Bug, ChevronRight, Wrench } from 'lucide-react';
+import { Play, Square, Trash2, Wifi, WifiOff, Bot, Target, Clock, CheckCircle2, Eye, Camera, CameraOff, Crosshair, ChevronDown, Gamepad2, Navigation, Bug, ChevronRight, Wrench, RotateCcw } from 'lucide-react';
 import { useSessionStore } from '../../store/useSessionStore';
 import { rosBridge } from '../../services/rosbridge';
 import { calculateOptimalPath } from '../../services/tsp';
@@ -62,6 +62,7 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
     const [mode, setMode] = useState<Mode>('setup');
     const [showCamera, setShowCamera] = useState(false);
     const [isStartingPlacement, setIsStartingPlacement] = useState(false);
+    const [connectionTimedOut, setConnectionTimedOut] = useState(false);
     const [devToolsOpen, setDevToolsOpen] = useState(false);
 
     // WASD manual control
@@ -153,6 +154,7 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
     const handleStartPlacing = async () => {
         if (!currentSession || currentSession.cones.length === 0) return;
         setIsStartingPlacement(true);
+        setConnectionTimedOut(false);
         try {
             // Calculate TSP path
             const points = currentSession.cones.map(c => ({ id: c.id, x: c.x, y: c.y }));
@@ -171,6 +173,10 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
                 }
                 setIsSimulating(true);
                 sendWaypointsToRobot();
+            }
+        } catch (e: any) {
+            if (e?.message?.includes('timed out')) {
+                setConnectionTimedOut(true);
             }
         } finally {
             setIsStartingPlacement(false);
@@ -246,6 +252,19 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
                 </button>
             </div>
 
+            {/* Connection timeout warning */}
+            {connectionTimedOut && (
+                <div className="p-3 bg-red-50 border border-red-300 rounded-xl">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-red-700">
+                        <WifiOff size={16} />
+                        Connection Timed Out
+                    </div>
+                    <p className="text-xs text-red-600 mt-1 leading-relaxed">
+                        Could not connect to the robot within 30 seconds. Check the URL and try again.
+                    </p>
+                </div>
+            )}
+
             {/* Start / Stop Placing */}
             {!isSimulating ? (
                 <button
@@ -286,6 +305,16 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
                     )}
                 </div>
             )}
+
+            {/* Collect Cones */}
+            <button
+                onClick={() => { /* TODO: wire up collect cones logic */ }}
+                disabled={coneCount === 0 || isSimulating || (!debugMode && isReadOnly)}
+                className="h-14 w-full flex items-center justify-center gap-3 bg-amber-500 text-white rounded-xl hover:bg-amber-600 active:bg-amber-700 transition-colors text-base font-bold disabled:opacity-30 shadow-sm"
+            >
+                <RotateCcw size={22} />
+                Collect Cones
+            </button>
 
             {/* Spacer to push dev tools to bottom */}
             <div className="flex-1" />

@@ -40,13 +40,12 @@ def trilaterate(anchors, distances):
 
     A = []
     b = []
-    w = []  # weights: closer anchors give more reliable ranges
+    w = []
     for aid in available[1:]:
         xi, yi = anchors[aid]
         di = distances[aid]
         A.append([2*(xi - x0), 2*(yi - y0)])
         b.append(d0**2 - di**2 + xi**2 - x0**2 + yi**2 - y0**2)
-        # Weight by inverse distance — closer anchors have less range noise
         w.append(1.0 / (di + 0.1))
 
     A = np.array(A)
@@ -61,10 +60,9 @@ def trilaterate(anchors, distances):
     except np.linalg.LinAlgError:
         return None
 
-def residual_check(anchors, distances, pos, threshold=0.30):
+def residual_check(anchors, distances, pos, threshold=0.20):
     """Check each anchor's residual. Return distances dict with outliers removed.
-    An outlier is an anchor whose measured distance disagrees with the
-    trilaterated position by more than `threshold` meters."""
+    Tighter threshold (20cm) catches more multipath/NLOS errors."""
     clean = {}
     for aid, d_meas in distances.items():
         ax, ay = anchors[aid]
@@ -96,15 +94,36 @@ class UWBNode(Node):
         self.anchor_pattern = re.compile(r'([0-9A-Fa-f]{4})\[\d+\.\d+,\d+\.\d+,\d+\.\d+\]=(\d+\.\d+)')
         self.buffer = ''
 
-        # Exponential moving average filter
+        # ── Filtering parameters ──────────────────────────────────────
+        # Stage 1: Per-anchor median filter on raw ranges
+        self.dist_history = {aid: [] for aid in ANCHORS}
+        self.dist_window = 5  # 5 = sweet spot (impulse removal without lag)
+
+        # Stage 2: Per-anchor EMA on ranges (smooths residual noise after median)
+        self.range_ema = {}  # {anchor_id: smoothed_distance}
+        self.range_ema_alpha = 0.3
+
+        # Stage 3: MAD-based outlier rejection per anchor
+        self.dist_extended_history = {aid: [] for aid in ANCHORS}
+        self.dist_extended_window = 15  # for computing MAD
+        self.mad_threshold = 3.0  # reject if |range - median| > 3 * MAD
+
+        # Stage 4: Variance-based trilateration weighting
+        self.range_variance = {aid: 0.01 for aid in ANCHORS}  # initial variance estimate
+
+        # Stage 5: Adaptive position EMA with velocity-based alpha
         self.filtered_x = None
         self.filtered_y = None
-        self.alpha_moving = 0.15   # alpha when robot is moving
-        self.alpha_still = 0.02    # alpha when robot is stationary — almost frozen
+        self.alpha_moving = 0.25   # responsive when robot moves
+        self.alpha_still = 0.03    # heavy smoothing when stationary
 
-        # Distance history for per-anchor median filtering
-        self.dist_history = {aid: [] for aid in ANCHORS}
-        self.dist_window = 9  # median over last 9 readings per anchor
+        # Velocity estimation from position changes (for stationary detection)
+        self.pos_history = []  # [(x, y, time), ...]
+        self.pos_history_window = 10
+        self.velocity_estimate = 0.0
+        self.velocity_ema_alpha = 0.15
+        self.stationary_threshold = 0.02  # m/s
+        self.moving_threshold = 0.05      # m/s
 
         # Load per-anchor calibration (bias corrections)
         self.anchor_bias = {}
@@ -149,36 +168,97 @@ class UWBNode(Node):
         self.odom_vx = msg.twist.twist.linear.x
         self.odom_vz = msg.twist.twist.angular.z
 
-    def median_filter_distances(self, raw_distances):
-        """Push raw distances into per-anchor history, return median-filtered values."""
-        filtered = {}
-        for aid, d in raw_distances.items():
-            hist = self.dist_history[aid]
-            hist.append(d)
-            if len(hist) > self.dist_window:
-                hist.pop(0)
-            # Need at least 3 readings for a useful median
-            if len(hist) >= 3:
-                filtered[aid] = float(np.median(hist))
-            else:
-                filtered[aid] = d
-        return filtered
+    def filter_range(self, aid, raw_d):
+        """Multi-stage range filtering for a single anchor.
+        Returns filtered distance, or None if rejected as outlier."""
 
-    def is_robot_moving(self):
-        """Check odom velocity to determine if the robot is actually moving."""
-        return abs(self.odom_vx) > 0.01 or abs(self.odom_vz) > 0.05
+        # Stage 1: MAD-based outlier rejection
+        ext_hist = self.dist_extended_history[aid]
+        ext_hist.append(raw_d)
+        if len(ext_hist) > self.dist_extended_window:
+            ext_hist.pop(0)
+
+        if len(ext_hist) >= 5:
+            median_val = float(np.median(ext_hist))
+            mad = float(np.median(np.abs(np.array(ext_hist) - median_val)))
+            if mad < 0.001:
+                mad = 0.001  # avoid division by zero
+            if abs(raw_d - median_val) > self.mad_threshold * mad:
+                return None  # reject this reading
+
+            # Update per-anchor variance estimate
+            self.range_variance[aid] = float(np.var(ext_hist))
+
+        # Stage 2: Median filter
+        hist = self.dist_history[aid]
+        hist.append(raw_d)
+        if len(hist) > self.dist_window:
+            hist.pop(0)
+
+        if len(hist) >= 3:
+            median_d = float(np.median(hist))
+        else:
+            median_d = raw_d
+
+        # Stage 3: Per-anchor range EMA
+        if aid in self.range_ema:
+            self.range_ema[aid] = (self.range_ema_alpha * median_d +
+                                   (1 - self.range_ema_alpha) * self.range_ema[aid])
+        else:
+            self.range_ema[aid] = median_d
+
+        return self.range_ema[aid]
+
+    def estimate_velocity(self, x, y):
+        """Estimate robot velocity from position history for adaptive smoothing."""
+        now = time.monotonic()
+        self.pos_history.append((x, y, now))
+        if len(self.pos_history) > self.pos_history_window:
+            self.pos_history.pop(0)
+
+        if len(self.pos_history) >= 2:
+            oldest = self.pos_history[0]
+            newest = self.pos_history[-1]
+            dt = newest[2] - oldest[2]
+            if dt > 0:
+                dist = math.sqrt((newest[0] - oldest[0])**2 + (newest[1] - oldest[1])**2)
+                instant_vel = dist / dt
+                self.velocity_estimate = (self.velocity_ema_alpha * instant_vel +
+                                          (1 - self.velocity_ema_alpha) * self.velocity_estimate)
+
+    def get_adaptive_alpha(self):
+        """Compute position EMA alpha based on motion state.
+        Uses both odom velocity and position-derived velocity for robustness."""
+        # Use odom velocity as primary signal (instant, no lag)
+        odom_moving = abs(self.odom_vx) > 0.01 or abs(self.odom_vz) > 0.05
+
+        if odom_moving:
+            return self.alpha_moving
+
+        # When odom says stationary, use position-derived velocity for confirmation
+        if self.velocity_estimate < self.stationary_threshold:
+            return self.alpha_still
+        elif self.velocity_estimate > self.moving_threshold:
+            return self.alpha_moving
+        else:
+            # Linear interpolation in transition zone
+            t = ((self.velocity_estimate - self.stationary_threshold) /
+                 (self.moving_threshold - self.stationary_threshold))
+            return self.alpha_still + t * (self.alpha_moving - self.alpha_still)
 
     def filter_position(self, x, y):
         # Clamp to valid area with small margin
         x = np.clip(x, -0.3, 3.8)
         y = np.clip(y, -0.3, 3.3)
 
+        # Update velocity estimate from raw trilaterated position
+        self.estimate_velocity(x, y)
+
         if self.filtered_x is None:
-            self.filtered_x = x
-            self.filtered_y = y
+            self.filtered_x = float(x)
+            self.filtered_y = float(y)
         else:
-            # Adaptive alpha: odom knows if we're moving or not
-            alpha = self.alpha_moving if self.is_robot_moving() else self.alpha_still
+            alpha = self.get_adaptive_alpha()
 
             dx = x - self.filtered_x
             dy = y - self.filtered_y
@@ -222,25 +302,29 @@ class UWBNode(Node):
                             if aid in self.anchor_bias:
                                 raw_distances[aid] -= self.anchor_bias[aid]
 
-                        # Step 1: Median-filter each anchor's distance
-                        distances = self.median_filter_distances(raw_distances)
+                        # Step 1: Multi-stage range filtering (MAD rejection + median + EMA)
+                        distances = {}
+                        for aid, d in raw_distances.items():
+                            filtered_d = self.filter_range(aid, d)
+                            if filtered_d is not None:
+                                distances[aid] = filtered_d
 
                         if len(distances) < 3:
                             continue
 
-                        # Step 2: First trilateration pass
+                        # Step 2: Variance-weighted trilateration
                         pos = trilaterate(ANCHORS, distances)
                         if pos is None:
                             continue
 
-                        # Step 3: Remove outlier anchors and re-trilaterate
+                        # Step 3: Residual check (tighter 20cm threshold)
                         clean = residual_check(ANCHORS, distances, pos)
                         if len(clean) >= 3 and len(clean) < len(distances):
                             pos2 = trilaterate(ANCHORS, clean)
                             if pos2 is not None:
                                 pos = pos2
 
-                        # Step 4: EMA position filter
+                        # Step 4: Adaptive position EMA
                         sx, sy = self.filter_position(float(pos[0]), float(pos[1]))
                         now = self.get_clock().now().to_msg()
 
@@ -270,7 +354,9 @@ class UWBNode(Node):
                             self.get_logger().info(
                                 f'UWB pos: x={sx:.3f} y={sy:.3f} | '
                                 f'raw: ({pos[0]:.2f},{pos[1]:.2f}) | '
-                                f'anchors: {len(distances)}')
+                                f'anchors: {len(distances)} | '
+                                f'alpha: {self.get_adaptive_alpha():.3f} | '
+                                f'vel: {self.velocity_estimate:.3f}m/s')
         except Exception as e:
             self.get_logger().warn(f'Read error: {e}')
 

@@ -44,7 +44,9 @@ PORT = 8888
 # Tuning parameters
 LINEAR_SPEED = 0.15       # m/s max forward speed
 ANGULAR_SPEED = 0.8       # rad/s max turning speed
-GOAL_TOLERANCE = 0.08     # meters - how close is "arrived"
+GOAL_TOLERANCE = 0.08     # meters - how close is "arrived" (fused)
+UWB_VERIFY_TOLERANCE = 0.10  # meters - UWB verification after reaching goal
+UWB_VERIFY_MAX_RETRIES = 2   # max re-navigation attempts for UWB verification
 ANGLE_TOLERANCE = 0.1     # radians - how aligned before driving forward
 CALIBRATION_DRIVE_DIST = 0.5  # meters to drive during calibration
 
@@ -360,7 +362,7 @@ class ConeBridgeNode(Node):
             if dist < GOAL_TOLERANCE:
                 self.send_velocity(0.0, 0.0)
                 self.get_logger().info(
-                    f'[NAV] ✓ Reached ({goal_x:.2f}, {goal_y:.2f}), '
+                    f'[NAV] ✓ Reached ({goal_x:.2f}, {goal_y:.2f}) via fused, '
                     f'error: {dist:.3f}m, loops: {loop_count}, '
                     f'time: {time.time() - start_time:.1f}s'
                 )
@@ -589,13 +591,10 @@ class ConeBridgeNode(Node):
 
     def get_display_pose(self):
         """Return the best available pose for the app to display.
-        Prefers fused position; falls back to raw UWB; then raw odom."""
-        if self.calibrated and self.anchor_x is not None:
-            fx, fy = self.get_fused_position()
-            return {'x': fx, 'y': fy, 'theta': self.get_fused_heading()}
-
+        Always uses raw UWB for position (stable, no fused jitter).
+        Falls back to odom only if UWB is unavailable."""
         if self.uwb_x is not None:
-            return {'x': self.uwb_x, 'y': self.uwb_y, 'theta': self.odom_yaw}
+            return {'x': self.uwb_x, 'y': self.uwb_y, 'theta': self.get_fused_heading()}
 
         return {'x': self.odom_x, 'y': self.odom_y, 'theta': self.odom_yaw}
 
@@ -819,6 +818,33 @@ class Handler(BaseHTTPRequestHandler):
                             f'Waypoint {i+1} cancelled'
                         )
                         break
+
+                    # UWB verification: check raw UWB distance to goal
+                    # If fused nav got us close but UWB says we're off, retry
+                    if bridge_node.uwb_x is not None:
+                        for retry in range(UWB_VERIFY_MAX_RETRIES):
+                            time.sleep(0.3)  # let UWB settle
+                            uwb_dx = wp['x'] - bridge_node.uwb_x
+                            uwb_dy = wp['y'] - bridge_node.uwb_y
+                            uwb_dist = math.sqrt(uwb_dx * uwb_dx + uwb_dy * uwb_dy)
+                            if uwb_dist <= UWB_VERIFY_TOLERANCE:
+                                bridge_node.get_logger().info(
+                                    f'[NAV] UWB verify OK: {uwb_dist:.3f}m from goal'
+                                )
+                                break
+                            bridge_node.get_logger().warn(
+                                f'[NAV] UWB verify FAILED: {uwb_dist:.3f}m from goal '
+                                f'(>{UWB_VERIFY_TOLERANCE}m), retry {retry+1}/{UWB_VERIFY_MAX_RETRIES}'
+                            )
+                            bridge_node.re_anchor()
+                            success = bridge_node.navigate_to(wp['x'], wp['y'])
+                            if not success:
+                                break
+                        if not success:
+                            bridge_node.get_logger().warn(
+                                f'Waypoint {i+1} cancelled during UWB verify'
+                            )
+                            break
 
                     # Dwell at waypoint
                     if dwell_time > 0:

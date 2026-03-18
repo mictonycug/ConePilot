@@ -365,6 +365,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // Robot Connection Actions
     connectToRobot: async (url: string) => {
         set({ isConnecting: true, robotUrl: url });
+
+        const CONNECTION_TIMEOUT_MS = 30_000;
+
         try {
             rosBridge.setCallbacks({
                 onConnectionChange: (connected) => {
@@ -372,7 +375,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
                     if (!connected) set({ robotPose: null, missionActive: false, coneChaseActive: false, coneChaseState: null, lockOnActive: false, lockOnLocked: false, lockOnDistance: null, lockOnBearing: null });
                 },
                 onPoseUpdate: (pose) => {
-                    set({ robotPose: pose });
+                    // Client-side EMA smoothing to eliminate visual jitter
+                    const prev = get().robotPose;
+                    if (prev) {
+                        const alpha = 0.3; // 30% new, 70% old — smooth but responsive
+                        set({
+                            robotPose: {
+                                x: alpha * pose.x + (1 - alpha) * prev.x,
+                                y: alpha * pose.y + (1 - alpha) * prev.y,
+                                theta: pose.theta, // don't smooth heading
+                            },
+                        });
+                    } else {
+                        set({ robotPose: pose });
+                    }
                 },
                 onStatusUpdate: (status: RobotStatus) => {
                     set({
@@ -398,40 +414,52 @@ export const useSessionStore = create<SessionState>((set, get) => ({
                     }
                 },
             });
-            await rosBridge.connect(url);
 
-            // Request exclusive lock via Socket.io
-            const socket = getSocket();
-            const normalizedUrl = url.replace(/\/+$/, '').toLowerCase();
+            // Race the entire connection + lock flow against a 30s timeout
+            const timeoutPromise = new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('Connection timed out after 30 seconds')), CONNECTION_TIMEOUT_MS)
+            );
 
-            // Listen for lock released (other controller disconnected)
-            socket.off('robot:lock-released');
-            socket.on('robot:lock-released', (data: { robotUrl: string }) => {
-                if (data.robotUrl === normalizedUrl) {
-                    set({ robotLockHolder: null });
-                    // Don't auto-acquire — user can reconnect to get control
-                }
-            });
+            await Promise.race([
+                (async () => {
+                    await rosBridge.connect(url);
 
-            // Listen for lock state changes
-            socket.off('robot:lock-state');
-            socket.on('robot:lock-state', (data: { robotUrl: string; lockedBy: string }) => {
-                if (data.robotUrl === normalizedUrl) {
-                    set({ robotLockHolder: data.lockedBy });
-                }
-            });
+                    // Request exclusive lock via Socket.io
+                    const socket = getSocket();
+                    const normalizedUrl = url.replace(/\/+$/, '').toLowerCase();
 
-            const response = await new Promise<{ granted: boolean }>((resolve) => {
-                socket.emit('robot:lock', url, resolve);
-            });
+                    // Listen for lock released (other controller disconnected)
+                    socket.off('robot:lock-released');
+                    socket.on('robot:lock-released', (data: { robotUrl: string }) => {
+                        if (data.robotUrl === normalizedUrl) {
+                            set({ robotLockHolder: null });
+                            // Don't auto-acquire — user can reconnect to get control
+                        }
+                    });
 
-            set({
-                isConnecting: false,
-                isReadOnly: !response.granted,
-                robotLockHolder: response.granted ? socket.id ?? null : 'other',
-            });
+                    // Listen for lock state changes
+                    socket.off('robot:lock-state');
+                    socket.on('robot:lock-state', (data: { robotUrl: string; lockedBy: string }) => {
+                        if (data.robotUrl === normalizedUrl) {
+                            set({ robotLockHolder: data.lockedBy });
+                        }
+                    });
+
+                    const response = await new Promise<{ granted: boolean }>((resolve) => {
+                        socket.emit('robot:lock', url, resolve);
+                    });
+
+                    set({
+                        isConnecting: false,
+                        isReadOnly: !response.granted,
+                        robotLockHolder: response.granted ? socket.id ?? null : 'other',
+                    });
+                })(),
+                timeoutPromise,
+            ]);
         } catch (e) {
             console.error('[RosBridge] Connection failed:', e);
+            rosBridge.disconnect();
             set({ isConnecting: false, robotConnected: false });
         }
     },
