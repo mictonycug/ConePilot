@@ -2,7 +2,7 @@
 import { create } from 'zustand';
 import { api } from '../lib/api';
 import { getSocket } from '../lib/socket';
-import { rosBridge, type RobotPose, type RobotStatus } from '../services/rosbridge';
+import { rosBridge, type RobotPose, type RobotStatus, type CollectionConeResult } from '../services/rosbridge';
 import { calculateOptimalPath } from '../services/tsp';
 
 export const SessionStatus = {
@@ -137,6 +137,19 @@ interface SessionState {
     // Lock-on Actions
     startLockOn: () => void;
     stopLockOn: () => void;
+
+    // Collection State
+    collectionActive: boolean;
+    collectionConeIndex: number;
+    collectionConeTotal: number;
+    collectionTargetConeId: string | null;
+    collectionPhase: string | null;
+    collectionPhaseDetail: string | null;
+    collectionResults: CollectionConeResult[];
+
+    // Collection Actions
+    startCollection: () => void;
+    stopCollection: () => void;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -184,6 +197,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     lockOnLocked: false,
     lockOnDistance: null,
     lockOnBearing: null,
+
+    // Collection State
+    collectionActive: false,
+    collectionConeIndex: 0,
+    collectionConeTotal: 0,
+    collectionTargetConeId: null,
+    collectionPhase: null,
+    collectionPhaseDetail: null,
+    collectionResults: [],
 
     // Mission State
     missionActive: false,
@@ -372,7 +394,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             rosBridge.setCallbacks({
                 onConnectionChange: (connected) => {
                     set({ robotConnected: connected });
-                    if (!connected) set({ robotPose: null, missionActive: false, coneChaseActive: false, coneChaseState: null, lockOnActive: false, lockOnLocked: false, lockOnDistance: null, lockOnBearing: null });
+                    if (!connected) set({ robotPose: null, missionActive: false, coneChaseActive: false, coneChaseState: null, lockOnActive: false, lockOnLocked: false, lockOnDistance: null, lockOnBearing: null, collectionActive: false, collectionPhase: null, collectionPhaseDetail: null, collectionTargetConeId: null, collectionResults: [] });
                 },
                 onPoseUpdate: (pose) => {
                     // Client-side EMA smoothing to eliminate visual jitter
@@ -404,6 +426,26 @@ export const useSessionStore = create<SessionState>((set, get) => ({
                         lockOnDistance: status.lock_on?.distance_m ?? null,
                         lockOnBearing: status.lock_on?.bearing_deg ?? null,
                     });
+                    // Collection status parsing
+                    if (status.collection) {
+                        set({
+                            collectionActive: status.collection.active,
+                            collectionConeIndex: status.collection.cone_index,
+                            collectionConeTotal: status.collection.cone_total,
+                            collectionTargetConeId: status.collection.cone_id,
+                            collectionPhase: status.collection.phase,
+                            collectionPhaseDetail: status.collection.phase_detail,
+                            collectionResults: status.collection.results,
+                        });
+                        // Auto-detect collection completion
+                        if (!status.collection.active) {
+                            set({ collectionActive: false });
+                        }
+                    } else if (get().collectionActive) {
+                        // Collection ended (no longer in status)
+                        set({ collectionActive: false, collectionPhase: null, collectionPhaseDetail: null });
+                    }
+
                     // Auto-detect mission completion
                     if (status.waypoint_state === 'completed') {
                         set({ missionActive: false });
@@ -743,5 +785,42 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         if (useSessionStore.getState().isReadOnly) return;
         await rosBridge.stopLockOn();
         set({ lockOnActive: false, lockOnLocked: false, lockOnDistance: null, lockOnBearing: null });
+    },
+
+    // Collection Actions
+    startCollection: async () => {
+        const state = useSessionStore.getState();
+        if (state.isReadOnly) return;
+        if (!state.robotConnected || !state.currentSession) return;
+        if (state.missionActive || state.coneChaseActive || state.lockOnActive || state.collectionActive) return;
+
+        const allCones = state.currentSession.cones.map(c => ({ id: c.id, x: c.x, y: c.y }));
+        if (allCones.length === 0) return;
+
+        // TSP optimize from robot's current position
+        const startPos = state.robotPose
+            ? { id: 'start', x: state.robotPose.x, y: state.robotPose.y }
+            : { id: 'start', x: 0, y: 0 };
+
+        const ordered = calculateOptimalPath(allCones, startPos);
+
+        set({ collectionActive: true });
+
+        const success = await rosBridge.startCollection(ordered, state.missionDwellTime);
+        if (!success) {
+            set({ collectionActive: false });
+        }
+    },
+
+    stopCollection: async () => {
+        if (useSessionStore.getState().isReadOnly) return;
+        await rosBridge.stopCollection();
+        set({
+            collectionActive: false,
+            collectionPhase: null,
+            collectionPhaseDetail: null,
+            collectionTargetConeId: null,
+            collectionResults: [],
+        });
     },
 }));

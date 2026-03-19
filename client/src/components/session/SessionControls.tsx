@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, Square, Trash2, Wifi, WifiOff, Bot, Target, Clock, CheckCircle2, Eye, Camera, CameraOff, Crosshair, ChevronDown, Gamepad2, Navigation, Bug, ChevronRight, Wrench, RotateCcw } from 'lucide-react';
+import { Play, Square, Trash2, Wifi, WifiOff, Bot, Target, Clock, CheckCircle2, Eye, Camera, CameraOff, Crosshair, ChevronDown, Gamepad2, Navigation, Bug, ChevronRight, Wrench, RotateCcw, XCircle } from 'lucide-react';
 import { useSessionStore } from '../../store/useSessionStore';
 import { rosBridge } from '../../services/rosbridge';
 import { calculateOptimalPath } from '../../services/tsp';
@@ -44,6 +44,14 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
         lockOnBearing,
         startLockOn,
         stopLockOn,
+        collectionActive,
+        collectionConeIndex,
+        collectionConeTotal,
+        collectionPhase,
+        collectionPhaseDetail,
+        collectionResults,
+        startCollection,
+        stopCollection,
         isReadOnly,
         isSimulating,
         setIsSimulating,
@@ -209,7 +217,7 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
 
     const visibleModes = modes.filter(m => !m.connected || robotConnected);
 
-    const isAnyAutoMode = coneChaseActive || lockOnActive || missionActive;
+    const isAnyAutoMode = coneChaseActive || lockOnActive || missionActive || collectionActive;
 
     return (
         <div className="flex flex-col gap-3 w-full">
@@ -307,14 +315,61 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
             )}
 
             {/* Collect Cones */}
-            <button
-                onClick={() => { /* TODO: wire up collect cones logic */ }}
-                disabled={coneCount === 0 || isSimulating || (!debugMode && isReadOnly)}
-                className="h-14 w-full flex items-center justify-center gap-3 bg-amber-500 text-white rounded-xl hover:bg-amber-600 active:bg-amber-700 transition-colors text-base font-bold disabled:opacity-30 shadow-sm"
-            >
-                <RotateCcw size={22} />
-                Collect Cones
-            </button>
+            {!collectionActive ? (
+                <button
+                    onClick={startCollection}
+                    disabled={coneCount === 0 || isSimulating || missionActive || coneChaseActive || lockOnActive || (!debugMode && (!robotConnected || isReadOnly))}
+                    className="h-14 w-full flex items-center justify-center gap-3 bg-amber-500 text-white rounded-xl hover:bg-amber-600 active:bg-amber-700 transition-colors text-base font-bold disabled:opacity-30 shadow-sm"
+                >
+                    <RotateCcw size={22} />
+                    Collect Cones
+                </button>
+            ) : (
+                <div className="flex flex-col gap-2">
+                    {/* Collection progress */}
+                    <div className="p-3.5 bg-white rounded-xl border border-amber-200">
+                        <div className="flex items-center justify-between text-sm mb-2">
+                            <span className="font-semibold text-text-primary">
+                                {collectionPhaseDetail ?? 'Starting...'}
+                            </span>
+                        </div>
+                        {collectionConeTotal > 0 && (
+                            <div className="w-full bg-gray-200 rounded-full h-2.5 mb-2">
+                                <div
+                                    className="bg-amber-500 h-2.5 rounded-full transition-all duration-300"
+                                    style={{
+                                        width: `${Math.min(100, ((collectionConeIndex + (collectionPhase === 'dwell' || collectionPhase === 'missing' ? 1 : 0.5)) / collectionConeTotal) * 100)}%`
+                                    }}
+                                />
+                            </div>
+                        )}
+                        {collectionResults.length > 0 && (
+                            <div className="flex gap-3 text-xs text-text-secondary">
+                                <span className="flex items-center gap-1">
+                                    <CheckCircle2 size={12} className="text-green-500" />
+                                    {collectionResults.filter(r => r.status === 'collected').length} collected
+                                </span>
+                                <span className="flex items-center gap-1">
+                                    <XCircle size={12} className="text-red-500" />
+                                    {collectionResults.filter(r => r.status === 'missing').length} missing
+                                </span>
+                                <span>
+                                    {collectionResults.filter(r => r.status === 'pending').length} remaining
+                                </span>
+                            </div>
+                        )}
+                    </div>
+
+                    <button
+                        onClick={stopCollection}
+                        disabled={isReadOnly}
+                        className="h-14 w-full flex items-center justify-center gap-3 bg-red-500 text-white rounded-xl hover:bg-red-600 active:bg-red-700 transition-colors text-base font-bold disabled:opacity-30 shadow-sm"
+                    >
+                        <Square size={22} />
+                        Stop Collection
+                    </button>
+                </div>
+            )}
 
             {/* Spacer to push dev tools to bottom */}
             <div className="flex-1" />

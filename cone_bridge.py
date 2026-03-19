@@ -105,6 +105,12 @@ class ConeBridgeNode(Node):
         self.lock_on_info = {}       # {locked, distance_m, bearing_deg}
         self.lock_on_frame = None    # latest JPEG bytes for /camera
 
+        # Collection mode state
+        self.collecting = False
+        self.collection_cancel = False
+        self.collection_status = {}    # exposed via /status
+        self.collection_frame = None   # annotated JPEG for /camera
+
         self.odom_sub = self.create_subscription(
             Odometry, '/odom', self.odom_callback, 10
         )
@@ -270,6 +276,8 @@ class ConeBridgeNode(Node):
 
     def stop(self):
         self.cancel_nav = True
+        self.collection_cancel = True
+        self.collecting = False
         self.send_velocity(0.0, 0.0)
         self.navigating = False
         self.calibrating = False
@@ -587,6 +595,252 @@ class ConeBridgeNode(Node):
             self.lock_on_frame = None
             self.lock_on_info = {}
 
+    # ── Cone collection ────────────────────────────────────────────
+
+    def _compute_staging_point(self, cone_x, cone_y, from_x, from_y, offset=0.10):
+        """Compute a point `offset` meters before the cone along the approach line."""
+        dx = cone_x - from_x
+        dy = cone_y - from_y
+        dist = math.sqrt(dx * dx + dy * dy)
+        if dist < 0.01:
+            # Same position — stage directly behind the cone (from origin direction)
+            return cone_x - offset, cone_y
+        # Point on approach line, `offset` meters before the cone
+        return cone_x - (dx / dist) * offset, cone_y - (dy / dist) * offset
+
+    def _visual_servo_collect(self, cap, focal, smoother, timeout=8.0):
+        """Camera-based final approach to a cone. Returns 'collected' or 'missing'."""
+        ANGULAR_GAIN = 1.8
+        TURN_THRESH = 0.25
+        SLOW_SPEED = 0.08
+        RAM_SPEED = 0.06
+        RAM_DURATION = 1.5
+        ARRIVE_DIST_MM = 120
+        MISSING_TIMEOUT = 2.0
+
+        start_time = time.time()
+        last_cone_seen = time.time()
+
+        while time.time() - start_time < timeout and not self.collection_cancel:
+            ret, frame = cap.read()
+            if not ret:
+                continue
+
+            actual_w = frame.shape[1]
+            actual_h = frame.shape[0]
+
+            raw_dets, rejected, _ = detect_red_cones(frame)
+            detections = smoother.update(raw_dets)
+            draw_detections(frame, detections, rejected, focal)
+
+            if detections:
+                last_cone_seen = time.time()
+                # Pick the largest (closest) cone
+                target = max(detections, key=lambda d: d[4])
+                tx, ty, tw, th, tarea, tellipse = target
+
+                cone_cx = tx + tw / 2.0
+                frame_cx = actual_w / 2.0
+                bearing = (cone_cx - frame_cx) / frame_cx
+
+                dist_mm, mode = estimate_distance(tx, ty, tw, th, focal, actual_w)
+
+                # Draw targeting overlay
+                center = (int(cone_cx), int(ty + th / 2))
+                cv2.circle(frame, center, 20, (0, 255, 255), 2)
+                cv2.line(frame, (center[0] - 25, center[1]), (center[0] + 25, center[1]), (0, 255, 255), 1)
+                cv2.line(frame, (center[0], center[1] - 25), (center[0], center[1] + 25), (0, 255, 255), 1)
+                cv2.putText(frame, f'COLLECT {dist_mm:.0f}mm', (10, actual_h - 15),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+                angular = -bearing * ANGULAR_GAIN
+
+                if dist_mm <= ARRIVE_DIST_MM:
+                    # Ram: drive forward for RAM_DURATION then stop
+                    self.get_logger().info(f'[COLLECT] Ramming! dist={dist_mm:.0f}mm')
+                    ram_start = time.time()
+                    while time.time() - ram_start < RAM_DURATION and not self.collection_cancel:
+                        self.send_velocity(RAM_SPEED, 0.0)
+                        # Keep reading frames for camera stream
+                        ret2, frame2 = cap.read()
+                        if ret2:
+                            cv2.putText(frame2, 'RAMMING!', (10, actual_h - 15),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                            _, jpeg = cv2.imencode('.jpg', frame2, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                            self.collection_frame = jpeg.tobytes()
+                        time.sleep(0.05)
+                    self.send_velocity(0.0, 0.0)
+                    return 'collected'
+                elif abs(bearing) > TURN_THRESH:
+                    # Turn in place
+                    self.send_velocity(0.0, angular)
+                else:
+                    # Slow approach with angular correction
+                    self.send_velocity(SLOW_SPEED, angular)
+            else:
+                # No cone seen
+                self.send_velocity(0.0, 0.0)
+                cv2.putText(frame, 'SEARCHING...', (10, actual_h - 15),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                if time.time() - last_cone_seen > MISSING_TIMEOUT:
+                    self.get_logger().warn('[COLLECT] Cone missing — not seen for 2s')
+                    return 'missing'
+
+            # Store frame for /camera
+            _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            self.collection_frame = jpeg.tobytes()
+
+            time.sleep(0.05)  # ~20Hz
+
+        return 'missing'
+
+    def run_collection(self, cones, dwell_time=4.0):
+        """Main collection loop. Runs in a thread."""
+        self.collecting = True
+        self.collection_cancel = False
+
+        total = len(cones)
+        results = [{'cone_id': c['id'], 'status': 'pending'} for c in cones]
+        self.collection_status = {
+            'active': True,
+            'cone_index': 0,
+            'cone_total': total,
+            'cone_id': cones[0]['id'] if cones else '',
+            'phase': 'navigating',
+            'phase_detail': f'Navigating to cone 1/{total}',
+            'results': results,
+        }
+
+        # Auto-calibrate if needed
+        if not self.calibrated:
+            self.collection_status['phase'] = 'navigating'
+            self.collection_status['phase_detail'] = 'Calibrating...'
+            if not self.calibrate():
+                self.get_logger().error('[COLLECT] Calibration failed')
+                self.collecting = False
+                self.collection_status['active'] = False
+                self.collection_status['phase'] = 'done'
+                return
+
+        # Open camera once for entire run
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            self.get_logger().error('[COLLECT] Cannot open camera')
+            self.collecting = False
+            self.collection_status['active'] = False
+            self.collection_status['phase'] = 'done'
+            return
+
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+        actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        focal = compute_focal_length_px(actual_w, actual_h, CAMERA_DFOV_DEG)
+        smoother = DetectionSmoother(hold_frames=10, match_distance=80, smooth=0.5)
+
+        prev_x, prev_y = self.get_fused_position()
+
+        try:
+            for i, cone in enumerate(cones):
+                if self.collection_cancel:
+                    break
+
+                cone_id = cone['id']
+                cone_x = cone['x']
+                cone_y = cone['y']
+
+                self.get_logger().info(
+                    f'[COLLECT] Cone {i+1}/{total}: id={cone_id} at ({cone_x:.2f}, {cone_y:.2f})'
+                )
+
+                # Update status: navigating
+                self.collection_status.update({
+                    'cone_index': i,
+                    'cone_id': cone_id,
+                    'phase': 'navigating',
+                    'phase_detail': f'Navigating to cone {i+1}/{total}',
+                })
+
+                # Compute staging point (10cm before cone)
+                staging_x, staging_y = self._compute_staging_point(
+                    cone_x, cone_y, prev_x, prev_y
+                )
+
+                # Navigate to staging point
+                self.re_anchor()
+                self.cancel_nav = False
+                success = self.navigate_to(staging_x, staging_y)
+                if not success or self.collection_cancel:
+                    results[i]['status'] = 'missing'
+                    break
+
+                # Turn to face the cone direction
+                fx, fy = self.get_fused_position()
+                target_angle = math.atan2(cone_y - fy, cone_x - fx)
+                heading = self.get_fused_heading()
+                angle_error = self.normalize_angle(target_angle - heading)
+                turn_start = time.time()
+                while abs(angle_error) > 0.15 and time.time() - turn_start < 3.0 and not self.collection_cancel:
+                    angular = max(-ANGULAR_SPEED, min(ANGULAR_SPEED, angle_error * 2.0))
+                    self.send_velocity(0.0, angular)
+                    time.sleep(0.05)
+                    heading = self.get_fused_heading()
+                    angle_error = self.normalize_angle(target_angle - heading)
+                self.send_velocity(0.0, 0.0)
+
+                if self.collection_cancel:
+                    results[i]['status'] = 'missing'
+                    break
+
+                # Visual servo phase
+                self.collection_status.update({
+                    'phase': 'visual_servo',
+                    'phase_detail': f'Visual servo on cone {i+1}/{total}',
+                })
+
+                result = self._visual_servo_collect(cap, focal, smoother)
+                results[i]['status'] = result
+
+                if result == 'collected':
+                    self.get_logger().info(f'[COLLECT] Cone {i+1}/{total} collected!')
+                    self.collection_status.update({
+                        'phase': 'dwell',
+                        'phase_detail': f'Collected cone {i+1}/{total} — dwelling',
+                    })
+                    # Dwell
+                    dwell_start = time.time()
+                    while time.time() - dwell_start < dwell_time and not self.collection_cancel:
+                        time.sleep(0.1)
+                else:
+                    self.get_logger().warn(f'[COLLECT] Cone {i+1}/{total} missing')
+                    self.collection_status.update({
+                        'phase': 'missing',
+                        'phase_detail': f'Cone {i+1}/{total} not found',
+                    })
+                    time.sleep(1.0)
+
+                # Update previous position for next staging point
+                prev_x, prev_y = self.get_fused_position()
+
+        except Exception as e:
+            self.get_logger().error(f'[COLLECT] Error: {e}')
+        finally:
+            cap.release()
+            self.send_velocity(0.0, 0.0)
+            self.collecting = False
+            self.collection_frame = None
+            self.collection_status.update({
+                'active': False,
+                'phase': 'done',
+                'phase_detail': 'Collection complete',
+            })
+            self.get_logger().info(
+                f'[COLLECT] Done. '
+                f'Collected: {sum(1 for r in results if r["status"] == "collected")}, '
+                f'Missing: {sum(1 for r in results if r["status"] == "missing")}, '
+                f'Pending: {sum(1 for r in results if r["status"] == "pending")}'
+            )
+
     # ── Status helpers ────────────────────────────────────────────
 
     def get_display_pose(self):
@@ -659,11 +913,31 @@ class Handler(BaseHTTPRequestHandler):
                 'cone_chase': chase_status,
                 'lock_on_active': bridge_node.lock_on_running,
                 'lock_on': bridge_node.lock_on_info if bridge_node.lock_on_running else None,
+                'collection': bridge_node.collection_status if bridge_node.collecting or bridge_node.collection_status.get('active') else None,
                 'nav_debug': bridge_node.nav_debug if bridge_node.navigating else None,
                 'odom_count': bridge_node.odom_count,
                 'uwb_count': bridge_node.uwb_count,
             })
         elif self.path == '/camera':
+            # If collection is running, serve its annotated frames
+            if bridge_node.collecting:
+                self.send_response(200)
+                self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=frame')
+                self._cors_headers()
+                self.end_headers()
+                try:
+                    while bridge_node.collecting:
+                        jpeg = bridge_node.collection_frame
+                        if jpeg:
+                            self.wfile.write(b'--frame\r\n')
+                            self.wfile.write(b'Content-Type: image/jpeg\r\n\r\n')
+                            self.wfile.write(jpeg)
+                            self.wfile.write(b'\r\n')
+                        time.sleep(0.1)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                return
+
             # If lock-on is running, serve its annotated frames
             if bridge_node.lock_on_running:
                 self.send_response(200)
@@ -759,6 +1033,8 @@ class Handler(BaseHTTPRequestHandler):
                 bridge_node.stop_cone_chase()
             if bridge_node.lock_on_running:
                 bridge_node.stop_lock_on()
+            if bridge_node.collecting:
+                bridge_node.collection_cancel = True
             bridge_node.stop()
             self._json_response({'ok': True})
 
@@ -907,6 +1183,46 @@ class Handler(BaseHTTPRequestHandler):
             bridge_node.stop_lock_on()
             self._json_response({'ok': True})
 
+        elif self.path == '/collect':
+            if bridge_node.collecting:
+                self._json_response({'error': 'collection already active'}, 409)
+                return
+            if bridge_node.cone_chase_active:
+                self._json_response({'error': 'cone chase active'}, 409)
+                return
+            if bridge_node.lock_on_running:
+                self._json_response({'error': 'lock-on active'}, 409)
+                return
+            if bridge_node.navigating:
+                self._json_response({'error': 'navigation active'}, 409)
+                return
+
+            cones = body.get('cones', [])
+            dwell_time = body.get('dwell_time', 4.0)
+            if not cones:
+                self._json_response({'error': 'no cones provided'}, 400)
+                return
+
+            # Release camera stream if active
+            if bridge_node.camera_streaming:
+                bridge_node.camera_stop = True
+                for _ in range(20):
+                    if not bridge_node.camera_streaming:
+                        break
+                    time.sleep(0.05)
+
+            threading.Thread(
+                target=bridge_node.run_collection,
+                args=(cones, dwell_time),
+                daemon=True,
+            ).start()
+            self._json_response({'ok': True, 'msg': f'collecting {len(cones)} cones'})
+
+        elif self.path == '/collect/stop':
+            bridge_node.collection_cancel = True
+            bridge_node.send_velocity(0.0, 0.0)
+            self._json_response({'ok': True})
+
         else:
             self._json_response({'error': 'not found'}, 404)
 
@@ -939,6 +1255,8 @@ def main():
     print(f'  POST /cone-chase/stop  - stop cone chase')
     print(f'  POST /lock-on/start    - start visual lock-on mode')
     print(f'  POST /lock-on/stop     - stop lock-on mode')
+    print(f'  POST /collect          - start cone collection')
+    print(f'  POST /collect/stop     - stop cone collection')
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -948,6 +1266,8 @@ def main():
             bridge_node.stop_cone_chase()
         if bridge_node.lock_on_running:
             bridge_node.stop_lock_on()
+        if bridge_node.collecting:
+            bridge_node.collection_cancel = True
         bridge_node.stop()
         bridge_node.destroy_node()
         rclpy.shutdown()

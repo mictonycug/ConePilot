@@ -50,6 +50,45 @@ const PlacingConeGhost = ({ x, y, size }: { x: number; y: number; size: number }
     );
 };
 
+// Pulsating cyan ring for collection target cone
+const CollectionTargetRing = ({ x, y, size }: { x: number; y: number; size: number }) => {
+    const [pulse, setPulse] = useState(0);
+    const half = size / 2;
+
+    useEffect(() => {
+        let raf: number;
+        const start = performance.now();
+        const animate = (now: number) => {
+            setPulse(Math.sin((now - start) * 0.005) * 0.5 + 0.5);
+            raf = requestAnimationFrame(animate);
+        };
+        raf = requestAnimationFrame(animate);
+        return () => cancelAnimationFrame(raf);
+    }, []);
+
+    const ringRadius = half * (1.2 + pulse * 0.5);
+    const ringOpacity = 0.8 - pulse * 0.4;
+
+    return (
+        <Group x={x} y={y} listening={false}>
+            <Circle
+                radius={ringRadius}
+                fill="transparent"
+                stroke="#06B6D4"
+                strokeWidth={2.5}
+                opacity={ringOpacity}
+            />
+            <Circle
+                radius={half * 1.1}
+                fill="transparent"
+                stroke="#06B6D4"
+                strokeWidth={1.5}
+                opacity={0.6}
+            />
+        </Group>
+    );
+};
+
 interface FieldCanvasProps {
     width: number;
     height: number;
@@ -82,7 +121,7 @@ const ConeImage = ({ x, y, opacity = 1, rotation = 0, size = 30 }: { x: number, 
 };
 
 export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height: _height }) => {
-    const { currentSession, addCone, updateConePosition, removeCone, optimizedPath, robotPose, robotConnected, missionConeIds, toggleMissionCone, isReadOnly, isPlacingCone, pendingCone } = useSessionStore();
+    const { currentSession, addCone, updateConePosition, removeCone, optimizedPath, robotPose, robotConnected, missionConeIds, toggleMissionCone, isReadOnly, isPlacingCone, pendingCone, collectionActive, collectionTargetConeId, collectionPhase, collectionResults } = useSessionStore();
     const stageRef = useRef<any>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [mousePos, setMousePos] = useState<{ x: number, y: number } | null>(null);
@@ -396,6 +435,45 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
                         />
                     ))}
 
+                    {/* Collection Overlays */}
+                    {collectionActive && collectionResults.length > 0 && currentSession.cones.map((cone) => {
+                        const result = collectionResults.find(r => r.cone_id === cone.id);
+                        if (!result) return null;
+                        const cx = cone.x * SCALE;
+                        const cy = fieldToCanvasY(cone.y);
+                        const isTarget = cone.id === collectionTargetConeId;
+
+                        if (isTarget) {
+                            return <CollectionTargetRing key={`ct-${cone.id}`} x={cx} y={cy} size={coneSize} />;
+                        }
+                        if (result.status === 'collected') {
+                            return (
+                                <Group key={`cc-${cone.id}`} x={cx} y={cy} listening={false}>
+                                    <Circle radius={coneSize * 0.6} fill="#22C55E" opacity={0.7} />
+                                    {/* Checkmark */}
+                                    <Line
+                                        points={[-4, 0, -1, 3, 5, -4]}
+                                        stroke="white"
+                                        strokeWidth={2}
+                                        lineCap="round"
+                                        lineJoin="round"
+                                    />
+                                </Group>
+                            );
+                        }
+                        if (result.status === 'missing') {
+                            return (
+                                <Group key={`cm-${cone.id}`} x={cx} y={cy} listening={false}>
+                                    <Circle radius={coneSize * 0.6} fill="#EF4444" opacity={0.7} />
+                                    {/* X mark */}
+                                    <Line points={[-3, -3, 3, 3]} stroke="white" strokeWidth={2} lineCap="round" />
+                                    <Line points={[3, -3, -3, 3]} stroke="white" strokeWidth={2} lineCap="round" />
+                                </Group>
+                            );
+                        }
+                        return null;
+                    })}
+
                     {/* Placing Animation */}
                     {pendingCone && (
                         <PlacingConeGhost
@@ -431,6 +509,25 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
                                 closed={true}
                             />
                         </Group>
+                    )}
+
+                    {/* Collection phase label near robot */}
+                    {robotPose && robotConnected && collectionActive && collectionPhase && (
+                        <Text
+                            x={robotPose.x * SCALE + 10}
+                            y={fieldToCanvasY(robotPose.y) - 16}
+                            text={
+                                collectionPhase === 'navigating' ? 'NAV' :
+                                collectionPhase === 'visual_servo' ? 'SERVO' :
+                                collectionPhase === 'ramming' ? 'RAM!' :
+                                collectionPhase === 'dwell' ? 'DONE' :
+                                collectionPhase === 'missing' ? 'MISS' : ''
+                            }
+                            fontSize={10}
+                            fill={collectionPhase === 'missing' ? '#EF4444' : '#06B6D4'}
+                            fontStyle="bold"
+                            listening={false}
+                        />
                     )}
 
                     {/* Ghost Cone Cursor (mousePos is in field coords, convert to canvas) */}

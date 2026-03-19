@@ -13,6 +13,21 @@ export interface ConeChaseStatus {
     visited: number;
 }
 
+export interface CollectionConeResult {
+    cone_id: string;
+    status: 'pending' | 'collected' | 'missing';
+}
+
+export interface CollectionStatus {
+    active: boolean;
+    cone_index: number;
+    cone_total: number;
+    cone_id: string;
+    phase: 'navigating' | 'visual_servo' | 'ramming' | 'dwell' | 'missing' | 'done';
+    phase_detail: string;
+    results: CollectionConeResult[];
+}
+
 export interface RobotStatus {
     connected: boolean;
     navigating: boolean;
@@ -28,6 +43,7 @@ export interface RobotStatus {
     cone_chase: ConeChaseStatus | null;
     lock_on_active: boolean;
     lock_on: { locked: boolean; distance_m?: number; bearing_deg?: number } | null;
+    collection: CollectionStatus | null;
 }
 
 type ConnectionCallback = (connected: boolean) => void;
@@ -186,6 +202,32 @@ class RosBridge {
         if (!this._connected) return false;
         try {
             const res = await fetch(`${this.baseUrl}/lock-on/stop`, {
+                method: 'POST',
+            });
+            return res.ok;
+        } catch {
+            return false;
+        }
+    }
+
+    async startCollection(cones: { id: string; x: number; y: number }[], dwellTime: number = 4.0): Promise<boolean> {
+        if (!this._connected) return false;
+        try {
+            const res = await fetch(`${this.baseUrl}/collect`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cones, dwell_time: dwellTime }),
+            });
+            return res.ok;
+        } catch {
+            return false;
+        }
+    }
+
+    async stopCollection(): Promise<boolean> {
+        if (!this._connected) return false;
+        try {
+            const res = await fetch(`${this.baseUrl}/collect/stop`, {
                 method: 'POST',
             });
             return res.ok;
