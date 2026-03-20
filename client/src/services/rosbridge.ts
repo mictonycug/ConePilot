@@ -136,14 +136,33 @@ class RosBridge {
         }
     }
 
-    async sendWaypoints(waypoints: { x: number; y: number }[], dwellTime?: number): Promise<boolean> {
+    async sendWaypoints(waypoints: { x: number; y: number }[], dwellTime?: number, obstacleAvoidance: boolean = true, mechanism?: 'place' | 'pickup' | null): Promise<boolean> {
         if (!this._connected) return false;
         try {
+            const payload: Record<string, unknown> = {
+                waypoints,
+                dwell_time: dwellTime ?? 0,
+                obstacle_avoidance: obstacleAvoidance,
+            };
+            if (mechanism) payload.mechanism = mechanism;
+            console.log('[RosBridge] sendWaypoints payload:', JSON.stringify(payload));
             const res = await fetch(`${this.baseUrl}/waypoints`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ waypoints, dwell_time: dwellTime ?? 0 }),
+                body: JSON.stringify(payload),
             });
+            console.log('[RosBridge] sendWaypoints response:', res.status, res.ok);
+            return res.ok;
+        } catch {
+            return false;
+        }
+    }
+
+    async triggerMechanism(action: 'place' | 'pickup'): Promise<boolean> {
+        if (!this._connected) return false;
+        try {
+            console.log(`[RosBridge] mechanism/${action}`);
+            const res = await fetch(`${this.baseUrl}/mechanism/${action}`, { method: 'POST' });
             return res.ok;
         } catch {
             return false;

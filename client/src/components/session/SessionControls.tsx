@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, Square, Trash2, Wifi, WifiOff, Bot, Target, Clock, CheckCircle2, Eye, Camera, CameraOff, Crosshair, ChevronDown, Gamepad2, Navigation, Bug, ChevronRight, Wrench, RotateCcw, XCircle } from 'lucide-react';
+import { Play, Square, Trash2, Wifi, WifiOff, Bot, Target, Clock, CheckCircle2, Eye, Camera, CameraOff, Crosshair, ChevronDown, Gamepad2, Navigation, Bug, ChevronRight, Wrench, RotateCcw, XCircle, Shield, ShieldOff, ArrowDown, ArrowUp } from 'lucide-react';
 import { useSessionStore } from '../../store/useSessionStore';
 import { rosBridge } from '../../services/rosbridge';
 import { calculateOptimalPath } from '../../services/tsp';
@@ -52,6 +52,10 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
         collectionResults,
         startCollection,
         stopCollection,
+        obstacleAvoidanceEnabled,
+        setObstacleAvoidanceEnabled,
+        mechanismAction,
+        setMechanismAction,
         isReadOnly,
         isSimulating,
         setIsSimulating,
@@ -291,6 +295,75 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
                 </div>
             )}
 
+            {/* Placement settings */}
+            {!isSimulating && (
+                <div className="flex flex-col gap-2 p-3 bg-gray-50 rounded-xl border border-border">
+                    <div className="flex items-center gap-2">
+                        {/* Mechanism action selector */}
+                        <select
+                            value={mechanismAction || 'none'}
+                            onChange={(e) => setMechanismAction(e.target.value === 'none' ? null : e.target.value as 'place' | 'pickup')}
+                            disabled={isReadOnly}
+                            className="px-2 py-1.5 text-xs font-semibold border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 bg-white disabled:opacity-50"
+                        >
+                            <option value="place">Place Cones</option>
+                            <option value="pickup">Pick Up Cones</option>
+                            <option value="none">Nav Only</option>
+                        </select>
+
+                        {/* Dwell time */}
+                        <Clock size={14} className="text-text-secondary flex-shrink-0" />
+                        <input
+                            type="number"
+                            min="0"
+                            max="60"
+                            step="0.5"
+                            value={missionDwellTime}
+                            onChange={(e) => setMissionDwellTime(parseFloat(e.target.value) || 0)}
+                            disabled={isReadOnly}
+                            className="w-14 px-2 py-1.5 text-xs border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 text-center disabled:opacity-50"
+                        />
+                        <span className="text-xs text-text-secondary">s</span>
+
+                        {/* OA toggle */}
+                        <button
+                            onClick={() => setObstacleAvoidanceEnabled(!obstacleAvoidanceEnabled)}
+                            disabled={isReadOnly}
+                            className={`ml-auto flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 ${
+                                obstacleAvoidanceEnabled
+                                    ? 'bg-green-100 text-green-700 border border-green-300'
+                                    : 'bg-red-50 text-red-600 border border-red-200'
+                            }`}
+                            title={obstacleAvoidanceEnabled ? 'Obstacle avoidance ON' : 'Obstacle avoidance OFF'}
+                        >
+                            {obstacleAvoidanceEnabled ? <Shield size={14} /> : <ShieldOff size={14} />}
+                            OA
+                        </button>
+                    </div>
+                    {/* Manual mechanism buttons */}
+                    {robotConnected && (
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => rosBridge.triggerMechanism('place')}
+                                disabled={isReadOnly}
+                                className="flex-1 h-9 flex items-center justify-center gap-1.5 bg-orange-50 text-orange-600 border border-orange-200 rounded-lg text-xs font-semibold hover:bg-orange-100 active:bg-orange-200 transition-colors disabled:opacity-50"
+                            >
+                                <ArrowDown size={14} />
+                                Drop Cone
+                            </button>
+                            <button
+                                onClick={() => rosBridge.triggerMechanism('pickup')}
+                                disabled={isReadOnly}
+                                className="flex-1 h-9 flex items-center justify-center gap-1.5 bg-blue-50 text-blue-600 border border-blue-200 rounded-lg text-xs font-semibold hover:bg-blue-100 active:bg-blue-200 transition-colors disabled:opacity-50"
+                            >
+                                <ArrowUp size={14} />
+                                Pick Up Cone
+                            </button>
+                        </div>
+                    )}
+                </div>
+            )}
+
             {/* Start / Stop Placing */}
             {!isSimulating ? (
                 <button
@@ -524,10 +597,19 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
                                             </div>
                                         </div>
 
-                                        {/* Dwell time */}
-                                        <div className="flex items-center gap-3">
-                                            <Clock size={18} className="text-text-secondary flex-shrink-0" />
-                                            <label className="text-sm text-text-secondary whitespace-nowrap">Dwell time</label>
+                                        {/* Mechanism + Dwell + OA */}
+                                        <div className="flex items-center gap-2">
+                                            <select
+                                                value={mechanismAction || 'none'}
+                                                onChange={(e) => setMechanismAction(e.target.value === 'none' ? null : e.target.value as 'place' | 'pickup')}
+                                                disabled={missionActive || isReadOnly}
+                                                className="px-2 py-2 text-xs font-semibold border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/30 bg-white disabled:opacity-50"
+                                            >
+                                                <option value="place">Place</option>
+                                                <option value="pickup">Pickup</option>
+                                                <option value="none">Nav Only</option>
+                                            </select>
+                                            <Clock size={16} className="text-text-secondary flex-shrink-0" />
                                             <input
                                                 type="number"
                                                 min="0"
@@ -536,9 +618,22 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
                                                 value={missionDwellTime}
                                                 onChange={(e) => setMissionDwellTime(parseFloat(e.target.value) || 0)}
                                                 disabled={missionActive || isReadOnly}
-                                                className="w-20 px-3 py-2.5 text-sm border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/30 text-center disabled:opacity-50"
+                                                className="w-16 px-2 py-2 text-xs border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/30 text-center disabled:opacity-50"
                                             />
-                                            <span className="text-sm text-text-secondary">sec</span>
+                                            <span className="text-xs text-text-secondary">s</span>
+                                            <button
+                                                onClick={() => setObstacleAvoidanceEnabled(!obstacleAvoidanceEnabled)}
+                                                disabled={missionActive || isReadOnly}
+                                                className={`ml-auto flex items-center gap-1.5 px-2 py-2 rounded-xl text-xs font-semibold transition-colors disabled:opacity-50 ${
+                                                    obstacleAvoidanceEnabled
+                                                        ? 'bg-green-100 text-green-700 border border-green-300'
+                                                        : 'bg-red-50 text-red-600 border border-red-200'
+                                                }`}
+                                                title={obstacleAvoidanceEnabled ? 'Obstacle avoidance ON' : 'Obstacle avoidance OFF'}
+                                            >
+                                                {obstacleAvoidanceEnabled ? <Shield size={14} /> : <ShieldOff size={14} />}
+                                                OA
+                                            </button>
                                         </div>
                                     </div>
 

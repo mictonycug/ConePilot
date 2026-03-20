@@ -153,6 +153,14 @@ interface SessionState {
     // Navigation Avoidance State
     navAvoidanceState: string | null;  // 'clear' | 'adjusting' | 'steering_around' | 'hard_avoid'
 
+    // Obstacle Avoidance Toggle
+    obstacleAvoidanceEnabled: boolean;
+    setObstacleAvoidanceEnabled: (enabled: boolean) => void;
+
+    // EV3 Mechanism
+    mechanismAction: 'place' | 'pickup' | null;
+    setMechanismAction: (action: 'place' | 'pickup' | null) => void;
+
     // Collection Actions
     startCollection: () => void;
     stopCollection: () => void;
@@ -216,6 +224,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // Ultrasonic State
     ultrasonicReadings: null,
     navAvoidanceState: null,
+
+    // Obstacle Avoidance
+    obstacleAvoidanceEnabled: true,
+    setObstacleAvoidanceEnabled: (enabled: boolean) => set({ obstacleAvoidanceEnabled: enabled }),
+
+    // EV3 Mechanism
+    mechanismAction: 'place' as 'place' | 'pickup' | null,
+    setMechanismAction: (action: 'place' | 'pickup' | null) => set({ mechanismAction: action }),
 
     // Mission State
     missionActive: false,
@@ -546,7 +562,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
         set({ isSimulating: true, simulationStatus: 'MOVING' });
 
-        const success = await rosBridge.sendWaypoints(waypoints);
+        // Use missionDwellTime so the robot reverses into each waypoint (dwell > 0)
+        const success = await rosBridge.sendWaypoints(waypoints, state.missionDwellTime, state.obstacleAvoidanceEnabled, state.mechanismAction);
         if (!success) {
             set({ isSimulating: false, simulationStatus: 'IDLE' });
         }
@@ -603,7 +620,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
         set({ missionActive: true });
 
-        const success = await rosBridge.sendWaypoints(waypoints, state.missionDwellTime);
+        const success = await rosBridge.sendWaypoints(waypoints, state.missionDwellTime, state.obstacleAvoidanceEnabled, state.mechanismAction);
         if (!success) {
             set({ missionActive: false });
         }

@@ -62,6 +62,9 @@ FIELD_MAX_X = 3.40         # 3.5m field - 10cm margin
 FIELD_MAX_Y = 2.90         # 3.0m field - 10cm margin
 BOUNDARY_SLOW_MARGIN = 0.20  # start slowing 20cm from boundary
 
+# EV3 cone mechanism server
+EV3_MECHANISM_URL = os.environ.get('EV3_URL', 'http://172.20.10.2:8080')
+
 
 class ConeBridgeNode(Node):
     def __init__(self):
@@ -306,9 +309,10 @@ class ConeBridgeNode(Node):
 
     # ── Navigation (uses fused position) ──────────────────────────
 
-    def navigate_to(self, goal_x, goal_y, reverse=False):
+    def navigate_to(self, goal_x, goal_y, reverse=False, obstacle_avoidance=True):
         """Proportional go-to-point using UWB+odom fused position.
-        If reverse=True, robot backs into the goal (front faces away)."""
+        If reverse=True, robot backs into the goal (front faces away).
+        If obstacle_avoidance=False, skip ultrasonic avoidance (still respects boundaries)."""
         self.navigating = True
         self.cancel_nav = False
         rate = 0.05  # 20Hz
@@ -376,7 +380,10 @@ class ConeBridgeNode(Node):
 
             # Obstacle avoidance + boundary enforcement
             target_angle = math.atan2(dy, dx)
-            oa_speed, oa_steer, oa_state = self.get_obstacle_avoidance(heading, target_angle)
+            if obstacle_avoidance:
+                oa_speed, oa_steer, oa_state = self.get_obstacle_avoidance(heading, target_angle)
+            else:
+                oa_speed, oa_steer, oa_state = 1.0, 0.0, 'clear'
             boundary_speed = self.get_boundary_speed_scale(fx, fy, heading)
 
             # Update debug state (visible via /status → nav_debug)
@@ -488,6 +495,66 @@ class ConeBridgeNode(Node):
                 return None  # stale
             return data.get('readings')
         except (FileNotFoundError, json.JSONDecodeError):
+            return None
+
+    # ── EV3 cone mechanism helpers ─────────────────────────────────
+
+    def ev3_place_cone(self):
+        """Tell the EV3 to drop a cone. Blocks until done."""
+        import urllib.request
+        self.get_logger().info(f'[EV3] Sending POST {EV3_MECHANISM_URL}/place ...')
+        try:
+            req = urllib.request.Request(EV3_MECHANISM_URL + '/place', method='POST')
+            resp = urllib.request.urlopen(req, timeout=5)
+            data = json.loads(resp.read())
+            self.get_logger().info(f'[EV3] Place response: {data}')
+            # Wait for mechanism to finish
+            for i in range(60):  # max 30s
+                time.sleep(0.5)
+                status = self.ev3_status()
+                if status and not status.get('busy', True):
+                    self.get_logger().info(f'[EV3] Place done after {(i+1)*0.5:.1f}s')
+                    return True
+                if i % 4 == 0:
+                    self.get_logger().info(f'[EV3] Waiting for place... busy={status.get("busy") if status else "no response"}')
+            self.get_logger().warn('[EV3] Place timed out after 30s')
+            return True
+        except Exception as e:
+            self.get_logger().error(f'[EV3] Place FAILED: {e}')
+            return False
+
+    def ev3_pickup_cone(self):
+        """Tell the EV3 to pick up a cone. Blocks until done."""
+        import urllib.request
+        self.get_logger().info(f'[EV3] Sending POST {EV3_MECHANISM_URL}/pickup ...')
+        try:
+            req = urllib.request.Request(EV3_MECHANISM_URL + '/pickup', method='POST')
+            resp = urllib.request.urlopen(req, timeout=5)
+            data = json.loads(resp.read())
+            self.get_logger().info(f'[EV3] Pickup response: {data}')
+            # Wait for mechanism to finish
+            for i in range(60):  # max 30s
+                time.sleep(0.5)
+                status = self.ev3_status()
+                if status and not status.get('busy', True):
+                    self.get_logger().info(f'[EV3] Pickup done after {(i+1)*0.5:.1f}s')
+                    return True
+                if i % 4 == 0:
+                    self.get_logger().info(f'[EV3] Waiting for pickup... busy={status.get("busy") if status else "no response"}')
+            self.get_logger().warn('[EV3] Pickup timed out after 30s')
+            return True
+        except Exception as e:
+            self.get_logger().error(f'[EV3] Pickup FAILED: {e}')
+            return False
+
+    def ev3_status(self):
+        """Get EV3 mechanism status."""
+        import urllib.request
+        try:
+            resp = urllib.request.urlopen(EV3_MECHANISM_URL + '/status', timeout=2)
+            return json.loads(resp.read())
+        except Exception as e:
+            self.get_logger().warn(f'[EV3] Status check failed: {e}')
             return None
 
     def get_obstacle_avoidance(self, heading, goal_angle):
@@ -1082,6 +1149,7 @@ class Handler(BaseHTTPRequestHandler):
                 'nav_debug': bridge_node.nav_debug if bridge_node.navigating else None,
                 'odom_count': bridge_node.odom_count,
                 'uwb_count': bridge_node.uwb_count,
+                'ev3_mechanism': bridge_node.ev3_status(),
             })
         elif self.path == '/camera':
             # If collection is running, serve its annotated frames
@@ -1233,9 +1301,18 @@ class Handler(BaseHTTPRequestHandler):
                 return
             waypoints = body.get('waypoints', [])
             dwell_time = body.get('dwell_time', 0)
+            use_obstacle_avoidance = body.get('obstacle_avoidance', True)
+            mechanism_action = body.get('mechanism', None)  # 'place' | 'pickup' | None
 
-            # Reverse into waypoints when placing cones (dwell > 0)
-            # so the front mechanism doesn't roll over just-placed cones
+            bridge_node.get_logger().info(
+                f'[WAYPOINTS] Received: {len(waypoints)} waypoints, '
+                f'dwell={dwell_time}, oa={use_obstacle_avoidance}, '
+                f'mechanism={mechanism_action}'
+            )
+
+            # When mechanism is active: drive FORWARD to first waypoint,
+            # then REVERSE to each subsequent waypoint (so we never drive
+            # over a cone we just placed)
             use_reverse = dwell_time > 0
 
             def run_waypoints():
@@ -1245,6 +1322,9 @@ class Handler(BaseHTTPRequestHandler):
                         bridge_node.waypoint_state = 'idle'
                         return
 
+                # Track whether we just placed a cone (need to reverse to next)
+                just_placed = False
+
                 bridge_node.waypoint_total = len(waypoints)
                 for i, wp in enumerate(waypoints):
                     bridge_node.waypoint_index = i
@@ -1253,12 +1333,16 @@ class Handler(BaseHTTPRequestHandler):
                     # Re-anchor from UWB before each waypoint
                     bridge_node.re_anchor()
 
+                    # After placing a cone, reverse to the next waypoint
+                    # so we don't drive over the cone we just dropped
+                    nav_reverse = just_placed and mechanism_action == 'place'
+
                     bridge_node.get_logger().info(
                         f'Waypoint {i+1}/{len(waypoints)}: '
                         f'({wp["x"]:.2f}, {wp["y"]:.2f})'
-                        f'{" [REVERSE]" if use_reverse else ""}'
+                        f'{" [REVERSE]" if nav_reverse else " [FORWARD]"}'
                     )
-                    success = bridge_node.navigate_to(wp['x'], wp['y'], reverse=use_reverse)
+                    success = bridge_node.navigate_to(wp['x'], wp['y'], reverse=nav_reverse, obstacle_avoidance=use_obstacle_avoidance)
                     if not success:
                         bridge_node.get_logger().warn(
                             f'Waypoint {i+1} cancelled'
@@ -1283,7 +1367,7 @@ class Handler(BaseHTTPRequestHandler):
                                 f'(>{UWB_VERIFY_TOLERANCE}m), retry {retry+1}/{UWB_VERIFY_MAX_RETRIES}'
                             )
                             bridge_node.re_anchor()
-                            success = bridge_node.navigate_to(wp['x'], wp['y'], reverse=use_reverse)
+                            success = bridge_node.navigate_to(wp['x'], wp['y'], reverse=use_reverse, obstacle_avoidance=use_obstacle_avoidance)
                             if not success:
                                 break
                         if not success:
@@ -1291,6 +1375,19 @@ class Handler(BaseHTTPRequestHandler):
                                 f'Waypoint {i+1} cancelled during UWB verify'
                             )
                             break
+
+                    # Trigger EV3 mechanism at waypoint (if requested)
+                    just_placed = False
+                    if mechanism_action and not bridge_node.cancel_nav:
+                        bridge_node.waypoint_state = 'mechanism'
+                        bridge_node.get_logger().info(
+                            f'[EV3] Triggering {mechanism_action} at waypoint {i+1}'
+                        )
+                        if mechanism_action == 'place':
+                            bridge_node.ev3_place_cone()
+                            just_placed = True
+                        elif mechanism_action == 'pickup':
+                            bridge_node.ev3_pickup_cone()
 
                     # Dwell at waypoint
                     if dwell_time > 0:
@@ -1322,6 +1419,18 @@ class Handler(BaseHTTPRequestHandler):
                 'ok': True,
                 'msg': f'executing {len(waypoints)} waypoints',
             })
+
+        elif self.path == '/mechanism/place':
+            def do_place():
+                bridge_node.ev3_place_cone()
+            threading.Thread(target=do_place, daemon=True).start()
+            self._json_response({'ok': True, 'msg': 'placing cone'})
+
+        elif self.path == '/mechanism/pickup':
+            def do_pickup():
+                bridge_node.ev3_pickup_cone()
+            threading.Thread(target=do_pickup, daemon=True).start()
+            self._json_response({'ok': True, 'msg': 'picking up cone'})
 
         elif self.path == '/calibrate':
             def cal():
