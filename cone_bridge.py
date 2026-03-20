@@ -50,6 +50,18 @@ UWB_VERIFY_MAX_RETRIES = 2   # max re-navigation attempts for UWB verification
 ANGLE_TOLERANCE = 0.1     # radians - how aligned before driving forward
 CALIBRATION_DRIVE_DIST = 0.5  # meters to drive during calibration
 
+# Obstacle avoidance parameters (distances in cm)
+OA_HARD_STOP_CM = 15       # full stop — collision imminent
+OA_SLOW_START_CM = 40      # begin proportional slowdown
+OA_SIDE_BIAS_CM = 60       # side sensors bias steering at this range
+
+# Field boundary enforcement (meters) — robot must stay inside
+FIELD_MIN_X = 0.10         # 10cm margin from edge
+FIELD_MIN_Y = 0.10
+FIELD_MAX_X = 3.40         # 3.5m field - 10cm margin
+FIELD_MAX_Y = 2.90         # 3.0m field - 10cm margin
+BOUNDARY_SLOW_MARGIN = 0.20  # start slowing 20cm from boundary
+
 
 class ConeBridgeNode(Node):
     def __init__(self):
@@ -95,6 +107,7 @@ class ConeBridgeNode(Node):
         # Cone chase subprocess state
         self.cone_chase_process = None
         self.cone_chase_status_file = '/tmp/cone_chaser_status.json'
+        self.ultrasonic_status_file = '/tmp/ultrasonic_status.json'
 
         # Camera stream state
         self.camera_streaming = False
@@ -293,16 +306,18 @@ class ConeBridgeNode(Node):
 
     # ── Navigation (uses fused position) ──────────────────────────
 
-    def navigate_to(self, goal_x, goal_y):
-        """Proportional go-to-point using UWB+odom fused position."""
+    def navigate_to(self, goal_x, goal_y, reverse=False):
+        """Proportional go-to-point using UWB+odom fused position.
+        If reverse=True, robot backs into the goal (front faces away)."""
         self.navigating = True
         self.cancel_nav = False
         rate = 0.05  # 20Hz
         loop_count = 0
         start_time = time.time()
 
+        nav_mode = 'REVERSE' if reverse else 'FORWARD'
         self.get_logger().info(
-            f'[NAV] ── Starting navigation to ({goal_x:.3f}, {goal_y:.3f}) ──'
+            f'[NAV] ── Starting {nav_mode} navigation to ({goal_x:.3f}, {goal_y:.3f}) ──'
         )
         self.get_logger().info(
             f'[NAV] Sensors: odom_received={self.odom_received} (count={self.odom_count}), '
@@ -352,7 +367,17 @@ class ConeBridgeNode(Node):
             dist = math.sqrt(dx * dx + dy * dy)
 
             target_angle = math.atan2(dy, dx)
-            angle_error = self.normalize_angle(target_angle - heading)
+            if reverse:
+                # Face AWAY from goal — back of robot points at target
+                steer_angle = self.normalize_angle(target_angle + math.pi)
+            else:
+                steer_angle = target_angle
+            angle_error = self.normalize_angle(steer_angle - heading)
+
+            # Obstacle avoidance + boundary enforcement
+            target_angle = math.atan2(dy, dx)
+            oa_speed, oa_steer, oa_state = self.get_obstacle_avoidance(heading, target_angle)
+            boundary_speed = self.get_boundary_speed_scale(fx, fy, heading)
 
             # Update debug state (visible via /status → nav_debug)
             self.nav_debug = {
@@ -365,12 +390,17 @@ class ConeBridgeNode(Node):
                 'odom_count': self.odom_count,
                 'loop': loop_count,
                 'elapsed': round(time.time() - start_time, 1),
+                'reverse': reverse,
+                'oa_state': oa_state,
+                'oa_speed': round(oa_speed, 2),
+                'oa_steer': round(oa_steer, 2),
+                'boundary_speed': round(boundary_speed, 2),
             }
 
             if dist < GOAL_TOLERANCE:
                 self.send_velocity(0.0, 0.0)
                 self.get_logger().info(
-                    f'[NAV] ✓ Reached ({goal_x:.2f}, {goal_y:.2f}) via fused, '
+                    f'[NAV] ✓ Reached ({goal_x:.2f}, {goal_y:.2f}) via {nav_mode}, '
                     f'error: {dist:.3f}m, loops: {loop_count}, '
                     f'time: {time.time() - start_time:.1f}s'
                 )
@@ -378,16 +408,38 @@ class ConeBridgeNode(Node):
                 self.navigating = False
                 return True
 
-            if abs(angle_error) > ANGLE_TOLERANCE:
+            if abs(angle_error) > ANGLE_TOLERANCE and oa_state == 'clear':
+                # Normal turning toward goal — no obstacle interference
                 angular = max(-ANGULAR_SPEED,
                               min(ANGULAR_SPEED, angle_error * 2.0))
                 self.send_velocity(0.0, angular)
                 mode = 'TURNING'
             else:
                 linear = min(LINEAR_SPEED, dist * 0.5)
-                angular = angle_error * 1.5
+                # Apply obstacle + boundary speed scaling
+                linear *= oa_speed * boundary_speed
+                if reverse:
+                    linear = -linear
+
+                if oa_state != 'clear':
+                    # Blend: avoidance steer + strong goal attraction
+                    angular = oa_steer + angle_error * 0.8
+                else:
+                    angular = angle_error * 1.5
+
+                angular = max(-ANGULAR_SPEED, min(ANGULAR_SPEED, angular))
                 self.send_velocity(linear, angular)
-                mode = 'DRIVING'
+
+                if oa_state == 'hard_avoid':
+                    mode = 'HARD_AVOID'
+                elif oa_state == 'steering_around':
+                    mode = 'STEERING_AROUND'
+                elif oa_state == 'adjusting':
+                    mode = 'ADJUSTING'
+                elif boundary_speed < 0.5:
+                    mode = 'BOUNDARY'
+                else:
+                    mode = 'REVERSING' if reverse else 'DRIVING'
 
             # Log every ~1 second (every 20 loops at 20Hz)
             if loop_count % 20 == 0:
@@ -427,6 +479,118 @@ class ConeBridgeNode(Node):
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             return None
+
+    def read_ultrasonic_status(self):
+        try:
+            with open(self.ultrasonic_status_file, 'r') as f:
+                data = json.load(f)
+            if time.time() - data.get('timestamp', 0) > 2.0:
+                return None  # stale
+            return data.get('readings')
+        except (FileNotFoundError, json.JSONDecodeError):
+            return None
+
+    def get_obstacle_avoidance(self, heading, goal_angle):
+        """Reactive obstacle avoidance — steers AROUND obstacles, never just stops.
+        Only reacts to sensors that are relevant to the current direction of travel.
+
+        Returns (speed_scale: 0.0-1.0, steer_override: rad/s or 0, state: str).
+        state is one of: 'clear', 'adjusting', 'steering_around', 'hard_avoid'."""
+        us = self.read_ultrasonic_status()
+        if not us:
+            return 1.0, 0.0, 'clear'
+
+        fc = us.get('FC', 999)
+        fl = us.get('FL', 999)
+        fr = us.get('FR', 999)
+        l  = us.get('L',  999)
+        r  = us.get('R',  999)
+
+        steer = 0.0
+        speed = 1.0
+        state = 'clear'
+
+        # ── CASE 1: Front center blocked — must steer around ──
+        if fc < OA_SLOW_START_CM:
+            # Pick the clearer side to steer toward
+            left_space = max(fl, l)    # how open is the left?
+            right_space = max(fr, r)   # how open is the right?
+
+            if fc <= OA_HARD_STOP_CM:
+                # Very close — hard steer, slow crawl (don't full-stop)
+                speed = 0.15  # crawl speed, not zero
+                turn_strength = 0.8
+                state = 'hard_avoid'
+            else:
+                # Approaching — proportional slowdown + moderate steer
+                speed = 0.4 + 0.6 * (fc - OA_HARD_STOP_CM) / (OA_SLOW_START_CM - OA_HARD_STOP_CM)
+                turn_strength = 0.5 * (1.0 - (fc - OA_HARD_STOP_CM) / (OA_SLOW_START_CM - OA_HARD_STOP_CM))
+                state = 'steering_around'
+
+            if left_space >= right_space:
+                steer = turn_strength   # positive = turn left (CCW)
+            else:
+                steer = -turn_strength  # negative = turn right (CW)
+
+        # ── CASE 2: Front-left or front-right blocked (asymmetric obstacle) ──
+        elif fl < OA_SLOW_START_CM or fr < OA_SLOW_START_CM:
+            if fl < fr and fl < OA_SLOW_START_CM:
+                # Obstacle on front-left — steer right
+                strength = 1.0 - (fl / OA_SLOW_START_CM)
+                steer = -strength * 0.5
+                speed = 0.6 + 0.4 * (fl / OA_SLOW_START_CM)
+                state = 'adjusting'
+            elif fr < fl and fr < OA_SLOW_START_CM:
+                # Obstacle on front-right — steer left
+                strength = 1.0 - (fr / OA_SLOW_START_CM)
+                steer = strength * 0.5
+                speed = 0.6 + 0.4 * (fr / OA_SLOW_START_CM)
+                state = 'adjusting'
+
+        # ── CASE 3: Side sensors — only matter if close AND heading toward them ──
+        # (pure side obstacles don't need speed change, just gentle nudge)
+        if l < OA_SIDE_BIAS_CM and state == 'clear':
+            nudge = 0.2 * (1.0 - l / OA_SIDE_BIAS_CM)
+            steer -= nudge  # nudge right (away from left)
+            if l < OA_HARD_STOP_CM:
+                state = 'adjusting'
+        if r < OA_SIDE_BIAS_CM and state == 'clear':
+            nudge = 0.2 * (1.0 - r / OA_SIDE_BIAS_CM)
+            steer += nudge  # nudge left (away from right)
+            if r < OA_HARD_STOP_CM:
+                state = 'adjusting'
+
+        return speed, steer, state
+
+    def get_boundary_speed_scale(self, fx, fy, heading):
+        """Slow down near field boundaries to prevent going out of bounds.
+        Returns speed_scale 0.0-1.0."""
+        scale = 1.0
+
+        # Check how close we are to each boundary IN THE DIRECTION WE'RE HEADING
+        cos_h = math.cos(heading)
+        sin_h = math.sin(heading)
+
+        # Only apply if heading toward a nearby boundary
+        if cos_h > 0.1:  # heading toward +X
+            margin = FIELD_MAX_X - fx
+            if margin < BOUNDARY_SLOW_MARGIN:
+                scale = min(scale, max(0.0, margin / BOUNDARY_SLOW_MARGIN))
+        elif cos_h < -0.1:  # heading toward -X
+            margin = fx - FIELD_MIN_X
+            if margin < BOUNDARY_SLOW_MARGIN:
+                scale = min(scale, max(0.0, margin / BOUNDARY_SLOW_MARGIN))
+
+        if sin_h > 0.1:  # heading toward +Y
+            margin = FIELD_MAX_Y - fy
+            if margin < BOUNDARY_SLOW_MARGIN:
+                scale = min(scale, max(0.0, margin / BOUNDARY_SLOW_MARGIN))
+        elif sin_h < -0.1:  # heading toward -Y
+            margin = fy - FIELD_MIN_Y
+            if margin < BOUNDARY_SLOW_MARGIN:
+                scale = min(scale, max(0.0, margin / BOUNDARY_SLOW_MARGIN))
+
+        return scale
 
     def start_cone_chase(self, max_cones=0, camera=0):
         if self.cone_chase_active:
@@ -914,6 +1078,7 @@ class Handler(BaseHTTPRequestHandler):
                 'lock_on_active': bridge_node.lock_on_running,
                 'lock_on': bridge_node.lock_on_info if bridge_node.lock_on_running else None,
                 'collection': bridge_node.collection_status if bridge_node.collecting or bridge_node.collection_status.get('active') else None,
+                'ultrasonic': bridge_node.read_ultrasonic_status(),
                 'nav_debug': bridge_node.nav_debug if bridge_node.navigating else None,
                 'odom_count': bridge_node.odom_count,
                 'uwb_count': bridge_node.uwb_count,
@@ -1069,6 +1234,10 @@ class Handler(BaseHTTPRequestHandler):
             waypoints = body.get('waypoints', [])
             dwell_time = body.get('dwell_time', 0)
 
+            # Reverse into waypoints when placing cones (dwell > 0)
+            # so the front mechanism doesn't roll over just-placed cones
+            use_reverse = dwell_time > 0
+
             def run_waypoints():
                 # Auto-calibrate on first navigation
                 if not bridge_node.calibrated:
@@ -1087,8 +1256,9 @@ class Handler(BaseHTTPRequestHandler):
                     bridge_node.get_logger().info(
                         f'Waypoint {i+1}/{len(waypoints)}: '
                         f'({wp["x"]:.2f}, {wp["y"]:.2f})'
+                        f'{" [REVERSE]" if use_reverse else ""}'
                     )
-                    success = bridge_node.navigate_to(wp['x'], wp['y'])
+                    success = bridge_node.navigate_to(wp['x'], wp['y'], reverse=use_reverse)
                     if not success:
                         bridge_node.get_logger().warn(
                             f'Waypoint {i+1} cancelled'
@@ -1113,7 +1283,7 @@ class Handler(BaseHTTPRequestHandler):
                                 f'(>{UWB_VERIFY_TOLERANCE}m), retry {retry+1}/{UWB_VERIFY_MAX_RETRIES}'
                             )
                             bridge_node.re_anchor()
-                            success = bridge_node.navigate_to(wp['x'], wp['y'])
+                            success = bridge_node.navigate_to(wp['x'], wp['y'], reverse=use_reverse)
                             if not success:
                                 break
                         if not success:

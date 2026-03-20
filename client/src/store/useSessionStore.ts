@@ -147,6 +147,12 @@ interface SessionState {
     collectionPhaseDetail: string | null;
     collectionResults: CollectionConeResult[];
 
+    // Ultrasonic State
+    ultrasonicReadings: Record<string, number> | null;
+
+    // Navigation Avoidance State
+    navAvoidanceState: string | null;  // 'clear' | 'adjusting' | 'steering_around' | 'hard_avoid'
+
     // Collection Actions
     startCollection: () => void;
     stopCollection: () => void;
@@ -206,6 +212,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     collectionPhase: null,
     collectionPhaseDetail: null,
     collectionResults: [],
+
+    // Ultrasonic State
+    ultrasonicReadings: null,
+    navAvoidanceState: null,
 
     // Mission State
     missionActive: false,
@@ -394,7 +404,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             rosBridge.setCallbacks({
                 onConnectionChange: (connected) => {
                     set({ robotConnected: connected });
-                    if (!connected) set({ robotPose: null, missionActive: false, coneChaseActive: false, coneChaseState: null, lockOnActive: false, lockOnLocked: false, lockOnDistance: null, lockOnBearing: null, collectionActive: false, collectionPhase: null, collectionPhaseDetail: null, collectionTargetConeId: null, collectionResults: [] });
+                    if (!connected) set({ robotPose: null, missionActive: false, coneChaseActive: false, coneChaseState: null, lockOnActive: false, lockOnLocked: false, lockOnDistance: null, lockOnBearing: null, collectionActive: false, collectionPhase: null, collectionPhaseDetail: null, collectionTargetConeId: null, collectionResults: [], ultrasonicReadings: null });
                 },
                 onPoseUpdate: (pose) => {
                     // Client-side EMA smoothing to eliminate visual jitter
@@ -425,6 +435,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
                         lockOnLocked: status.lock_on?.locked ?? false,
                         lockOnDistance: status.lock_on?.distance_m ?? null,
                         lockOnBearing: status.lock_on?.bearing_deg ?? null,
+                        ultrasonicReadings: status.ultrasonic ?? null,
+                        navAvoidanceState: status.nav_debug?.oa_state ?? null,
                     });
                     // Collection status parsing
                     if (status.collection) {

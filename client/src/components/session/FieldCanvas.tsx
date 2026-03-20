@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { Stage, Layer, Rect, Line, Text, Image as KonvaImage, Group, Circle } from 'react-konva';
+import { Stage, Layer, Rect, Line, Text, Image as KonvaImage, Group, Circle, Wedge } from 'react-konva';
 import useImage from 'use-image';
 import { useSessionStore } from '../../store/useSessionStore';
 import { ConeNode } from './ConeNode';
@@ -94,6 +94,19 @@ interface FieldCanvasProps {
     height: number;
 }
 
+// ── Ultrasonic radar overlay ─────────────────────────────
+const ULTRASONIC_ANGLES: Record<string, number> = {
+    FC: 0, FL: -40, FR: 40, L: -90, R: 90, BK: 180,
+};
+const US_BEAM_WIDTH = 30;          // degrees
+const US_MAX_DISPLAY_CM = 100;     // cap visual at 1m — beyond this is noise
+
+function usZoneColor(cm: number) {
+    if (cm < 15)  return { fill: 'rgba(239,68,68,0.25)', stroke: 'rgba(239,68,68,0.6)' };   // red — hard stop
+    if (cm < 40)  return { fill: 'rgba(234,179,8,0.18)', stroke: 'rgba(234,179,8,0.5)' };   // yellow — slowing
+    return { fill: 'rgba(34,197,94,0.10)', stroke: 'rgba(34,197,94,0.3)' };                  // green — clear
+}
+
 const SCALE = 120; // 120px/m — high resolution for small fields
 const ZOOM_STEP = 0.25;
 const MIN_ZOOM = 1;
@@ -121,7 +134,7 @@ const ConeImage = ({ x, y, opacity = 1, rotation = 0, size = 30 }: { x: number, 
 };
 
 export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height: _height }) => {
-    const { currentSession, addCone, updateConePosition, removeCone, optimizedPath, robotPose, robotConnected, missionConeIds, toggleMissionCone, isReadOnly, isPlacingCone, pendingCone, collectionActive, collectionTargetConeId, collectionPhase, collectionResults } = useSessionStore();
+    const { currentSession, addCone, updateConePosition, removeCone, optimizedPath, robotPose, robotConnected, missionConeIds, toggleMissionCone, isReadOnly, isPlacingCone, pendingCone, collectionActive, collectionTargetConeId, collectionPhase, collectionResults, ultrasonicReadings, navAvoidanceState } = useSessionStore();
     const stageRef = useRef<any>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [mousePos, setMousePos] = useState<{ x: number, y: number } | null>(null);
@@ -508,7 +521,44 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
                                 fill="#93C5FD"
                                 closed={true}
                             />
+                            {/* Ultrasonic radar wedges */}
+                            {ultrasonicReadings && Object.entries(ultrasonicReadings).map(([key, cm]) => {
+                                if (cm <= 0 || cm > US_MAX_DISPLAY_CM) return null;
+                                const angle = ULTRASONIC_ANGLES[key];
+                                if (angle === undefined) return null;
+                                const radiusPx = (cm / 100) * SCALE;
+                                const { fill, stroke } = usZoneColor(cm);
+                                return (
+                                    <Wedge
+                                        key={`us-${key}`}
+                                        radius={radiusPx}
+                                        angle={US_BEAM_WIDTH}
+                                        rotation={angle - US_BEAM_WIDTH / 2}
+                                        fill={fill}
+                                        stroke={stroke}
+                                        strokeWidth={1}
+                                        listening={false}
+                                    />
+                                );
+                            })}
                         </Group>
+                    )}
+
+                    {/* Obstacle avoidance state badge near robot */}
+                    {robotPose && robotConnected && navAvoidanceState && navAvoidanceState !== 'clear' && (
+                        <Text
+                            x={robotPose.x * SCALE - 20}
+                            y={fieldToCanvasY(robotPose.y) - 22}
+                            text={
+                                navAvoidanceState === 'hard_avoid' ? 'AVOID!' :
+                                navAvoidanceState === 'steering_around' ? 'STEERING' :
+                                navAvoidanceState === 'adjusting' ? 'ADJUST' : ''
+                            }
+                            fontSize={9}
+                            fill={navAvoidanceState === 'hard_avoid' ? '#EF4444' : '#F59E0B'}
+                            fontStyle="bold"
+                            listening={false}
+                        />
                     )}
 
                     {/* Collection phase label near robot */}

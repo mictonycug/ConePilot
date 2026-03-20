@@ -61,8 +61,19 @@ setup_ros_env() {
         exit 1
     fi
 
+    # Source TurtleBot3 workspace overlays (built packages like turtlebot3_bringup)
+    # Use /home/ubuntu explicitly so this works under sudo too
+    local real_home="/home/${SUDO_USER:-$USER}"
+    for ws in "$real_home/turtlebot3_ws/install/setup.bash" "$real_home/tb3_ws/install/setup.bash"; do
+        if [ -f "$ws" ]; then
+            source "$ws"
+            log_ok "Sourced workspace: $ws"
+        fi
+    done
+
     export ROS_DOMAIN_ID="$ROS_DOMAIN"
     export TURTLEBOT3_MODEL="$TURTLEBOT_MODEL"
+    export LDS_MODEL="${LDS_MODEL:-LDS-01}"
 
     # CRITICAL: Unset university DDS config that breaks off-campus networking.
     # The robot's .bashrc sets CYCLONEDDS_URI for the university network with
@@ -107,6 +118,7 @@ reset_ros2() {
 BRINGUP_PID=""
 UWB_PID=""
 BRIDGE_PID=""
+ULTRASONIC_PID=""
 
 is_running() {
     pgrep -f "$1" > /dev/null 2>&1
@@ -145,6 +157,7 @@ stop_all() {
 
     # Stop in reverse order (bridge first, bringup last)
     kill_service "cone_bridge.py" "ConePilot Bridge"
+    kill_service "ultrasonic_radar.py" "Ultrasonic Radar"
     kill_service "uwb_node.py" "UWB Node"
     kill_service "robot.launch.py" "TurtleBot3 Bringup"
 
@@ -190,6 +203,12 @@ show_status() {
     else
         log_err "ConePilot Bridge      NOT RUNNING"
         all_ok=false
+    fi
+
+    if is_running "ultrasonic_radar.py"; then
+        log_ok "Ultrasonic Radar      running (PID $(get_pid 'ultrasonic_radar.py'))"
+    else
+        log_warn "Ultrasonic Radar      not running (optional)"
     fi
 
     echo ""
@@ -362,7 +381,7 @@ start_bringup() {
 
     mkdir -p "$LOG_DIR"
 
-    ros2 launch turtlebot3_bringup robot.launch.py \
+    ros2 launch turtlebot3_bringup robot.launch.py usb_port:=/dev/serial/by-id/usb-ROBOTIS_OpenCR_Virtual_ComPort_in_FS_Mode_FFFFFFFEFFFF-if00 \
         >> "$LOG_DIR/bringup.log" 2>&1 &
     BRINGUP_PID=$!
 
@@ -451,6 +470,31 @@ start_bridge() {
     fi
 }
 
+start_ultrasonic() {
+    log_step "Starting Ultrasonic Radar"
+
+    if is_running "ultrasonic_radar.py"; then
+        log_warn "Ultrasonic Radar already running (PID $(get_pid 'ultrasonic_radar.py'))"
+        return 0
+    fi
+
+    mkdir -p "$LOG_DIR"
+
+    sudo python3 "$SCRIPT_DIR/ultrasonic_radar.py" --headless \
+        --status-file /tmp/ultrasonic_status.json \
+        >> "$LOG_DIR/ultrasonic.log" 2>&1 &
+    ULTRASONIC_PID=$!
+
+    sleep 2
+
+    if is_running "ultrasonic_radar.py"; then
+        log_ok "Ultrasonic Radar started (PID $(get_pid 'ultrasonic_radar.py'))"
+    else
+        log_warn "Ultrasonic Radar failed to start (non-fatal):"
+        tail -10 "$LOG_DIR/ultrasonic.log" 2>/dev/null || true
+    fi
+}
+
 # ── Watchdog ─────────────────────────────────────────────────────────────────
 # Runs in the background, checks services every WATCHDOG_INTERVAL seconds,
 # and auto-restarts any that have crashed.
@@ -465,7 +509,7 @@ watchdog_loop() {
         if ! is_running "robot.launch.py"; then
             log_err "WATCHDOG: TurtleBot3 Bringup crashed - restarting..."
             echo "--- WATCHDOG RESTART $(date) ---" >> "$LOG_DIR/bringup.log"
-            ros2 launch turtlebot3_bringup robot.launch.py \
+            ros2 launch turtlebot3_bringup robot.launch.py usb_port:=/dev/serial/by-id/usb-ROBOTIS_OpenCR_Virtual_ComPort_in_FS_Mode_FFFFFFFEFFFF-if00 \
                 >> "$LOG_DIR/bringup.log" 2>&1 &
             BRINGUP_PID=$!
             log_ok "WATCHDOG: Bringup restarted (PID $BRINGUP_PID)"
@@ -490,6 +534,17 @@ watchdog_loop() {
                 >> "$LOG_DIR/cone_bridge.log" 2>&1 &
             BRIDGE_PID=$!
             log_ok "WATCHDOG: Bridge restarted (PID $BRIDGE_PID)"
+        fi
+
+        # Check ultrasonic (non-fatal)
+        if [ -n "$ULTRASONIC_PID" ] && ! is_running "ultrasonic_radar.py"; then
+            log_warn "WATCHDOG: Ultrasonic Radar crashed - restarting..."
+            echo "--- WATCHDOG RESTART $(date) ---" >> "$LOG_DIR/ultrasonic.log"
+            sudo python3 "$SCRIPT_DIR/ultrasonic_radar.py" --headless \
+                --status-file /tmp/ultrasonic_status.json \
+                >> "$LOG_DIR/ultrasonic.log" 2>&1 &
+            ULTRASONIC_PID=$!
+            log_ok "WATCHDOG: Ultrasonic restarted (PID $ULTRASONIC_PID)"
         fi
     done
 }
@@ -623,6 +678,8 @@ main() {
     fi
 
     start_bridge
+
+    start_ultrasonic
 
     # Final status
     echo ""

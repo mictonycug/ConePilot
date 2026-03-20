@@ -13,8 +13,9 @@ export default defineConfig({
   },
   server: {
     proxy: {
+      // Kept as fallback — the app now connects directly to discovered IP
       '/robot': {
-        target: 'http://172.20.10.6:8888',
+        target: process.env.ROBOT_URL || 'http://172.20.10.2:8888',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/robot/, ''),
       },

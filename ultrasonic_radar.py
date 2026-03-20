@@ -6,27 +6,30 @@ Usage:
     pip install rich --break-system-packages
     sudo PYTHONPATH=/home/ubuntu/.local/lib/python3.12/site-packages python3 radar.py
 
-    --diag   Run sensor diagnostics only
+    --diag       Run sensor diagnostics only
+    --headless   Write JSON to status file instead of Rich UI
+    --status-file PATH  Status file path (default: /tmp/ultrasonic_status.json)
 """
 
+import argparse
+import json
+import os
 import sys
 import time
 import signal
 import threading
 
-try:
-    from rich.console import Console, Group
-    from rich.live import Live
-    from rich.panel import Panel
-    from rich.table import Table
-    from rich.text import Text
-    from rich import box
-except ImportError:
-    print("Requires 'rich' library.  Install with:")
-    print("  pip install rich --break-system-packages")
-    sys.exit(1)
-
 from grove.grove_ultrasonic_ranger import GroveUltrasonicRanger
+
+# ── Args ─────────────────────────────────────────────────
+
+def parse_args():
+    p = argparse.ArgumentParser(description='TurtleBot Ultrasonic Radar')
+    p.add_argument('--diag', action='store_true', help='Run sensor diagnostics only')
+    p.add_argument('--headless', action='store_true', help='Write JSON status file instead of Rich UI')
+    p.add_argument('--status-file', default='/tmp/ultrasonic_status.json',
+                   help='Path for JSON status output (default: /tmp/ultrasonic_status.json)')
+    return p.parse_args()
 
 # ── Config ────────────────────────────────────────────────
 SENSORS = [
@@ -50,8 +53,6 @@ PARALLEL_GROUPS = [
     ('FL', 'R'),    # front-left ↔ right
     ('FR', 'L'),    # front-right ↔ left
 ]
-
-console = Console()
 
 # ── Sensor I/O ────────────────────────────────────────────
 
@@ -366,25 +367,88 @@ def run_diagnostics(probes):
     return working
 
 
+# ── Headless mode ────────────────────────────────────────
+
+def run_headless(probes, status_file):
+    """Write JSON status to file instead of Rich UI."""
+    print(f"[headless] Writing to {status_file}")
+
+    smoothed = {}
+
+    def cleanup(*_):
+        try:
+            os.remove(status_file)
+        except FileNotFoundError:
+            pass
+        print("\n[headless] Stopped.")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, cleanup)
+    signal.signal(signal.SIGTERM, cleanup)
+
+    while True:
+        raw = poll_parallel(probes)
+
+        for key, val in raw.items():
+            if val > 0:
+                if key in smoothed and smoothed[key] > 0:
+                    smoothed[key] = ALPHA * val + (1 - ALPHA) * smoothed[key]
+                else:
+                    smoothed[key] = val
+            elif key not in smoothed:
+                smoothed[key] = -1
+
+        status = {
+            "timestamp": time.time(),
+            "readings": {k: round(v, 1) for k, v in smoothed.items()},
+        }
+        tmp = status_file + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(status, f)
+        os.replace(tmp, status_file)
+
+
 # ── Main ──────────────────────────────────────────────────
 
 def main():
-    diag_only = "--diag" in sys.argv
+    args = parse_args()
 
-    console.print("[bold]Initializing sensors...[/bold]")
+    # Init sensors (no rich needed)
+    print("Initializing sensors...")
     probes = {}
     for key, pin, label in SENSORS:
         try:
             probes[key] = GroveUltrasonicRanger(pin)
-            console.print(f"  [green]✓[/green] {key} {label} (D{pin})")
+            print(f"  OK  {key} {label} (D{pin})")
         except Exception as e:
-            console.print(f"  [red]✗[/red] {key} {label} (D{pin}): {e}")
+            print(f"  ERR {key} {label} (D{pin}): {e}")
 
     if not probes:
-        console.print("[red]No sensors initialized![/red]")
+        print("No sensors initialized!")
         sys.exit(1)
 
-    if diag_only:
+    # Headless mode — no rich dependency
+    if args.headless:
+        run_headless(probes, args.status_file)
+        return
+
+    # Rich UI mode — import here so headless works without rich
+    try:
+        from rich.console import Console, Group
+        from rich.live import Live
+        from rich.panel import Panel
+        from rich.table import Table
+        from rich.text import Text
+        from rich import box
+    except ImportError:
+        print("Rich UI requires 'rich' library.  Install with:")
+        print("  pip install rich --break-system-packages")
+        print("Or use --headless mode.")
+        sys.exit(1)
+
+    console = Console()
+
+    if args.diag:
         run_diagnostics(probes)
         return
 

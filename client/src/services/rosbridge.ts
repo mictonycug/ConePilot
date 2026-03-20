@@ -44,6 +44,14 @@ export interface RobotStatus {
     lock_on_active: boolean;
     lock_on: { locked: boolean; distance_m?: number; bearing_deg?: number } | null;
     collection: CollectionStatus | null;
+    ultrasonic: Record<string, number> | null;
+    nav_debug: {
+        oa_state?: string;
+        oa_speed?: number;
+        oa_steer?: number;
+        dist?: number;
+        goal?: [number, number];
+    } | null;
 }
 
 type ConnectionCallback = (connected: boolean) => void;

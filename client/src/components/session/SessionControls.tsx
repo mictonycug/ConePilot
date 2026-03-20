@@ -72,6 +72,24 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
     const [isStartingPlacement, setIsStartingPlacement] = useState(false);
     const [connectionTimedOut, setConnectionTimedOut] = useState(false);
     const [devToolsOpen, setDevToolsOpen] = useState(false);
+    const [isDiscovering, setIsDiscovering] = useState(false);
+
+    // Auto-discover robot on mount
+    useEffect(() => {
+        if (robotConnected || debugMode) return;
+        let cancelled = false;
+        setIsDiscovering(true);
+        fetch('/api/discover-robot')
+            .then(r => r.json())
+            .then(data => {
+                if (!cancelled && data.found && data.url) {
+                    setUrlInput(data.url);
+                }
+            })
+            .catch(() => {})
+            .finally(() => { if (!cancelled) setIsDiscovering(false); });
+        return () => { cancelled = true; };
+    }, []);
 
     // WASD manual control
     const LINEAR_SPEED = 0.15;
@@ -758,21 +776,47 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
                             )}
                         </div>
                         {!robotConnected && (
-                            <div className="flex gap-2 mt-2">
-                                <input
-                                    type="text"
-                                    value={urlInput}
-                                    onChange={(e) => setUrlInput(e.target.value)}
-                                    placeholder="http://..."
-                                    className="flex-1 min-w-0 px-3 py-2.5 text-sm border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/30"
-                                />
-                                <button
-                                    onClick={handleConnect}
-                                    disabled={isConnecting}
-                                    className="h-11 px-4 bg-green-50 text-green-600 border border-green-200 rounded-xl text-sm font-semibold hover:bg-green-100 active:bg-green-200 transition-colors disabled:opacity-50 flex items-center gap-2 flex-shrink-0"
-                                >
-                                    {isConnecting ? '...' : <Wifi size={16} />}
-                                </button>
+                            <div className="flex flex-col gap-2 mt-2">
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        value={isDiscovering ? 'Scanning network...' : urlInput}
+                                        onChange={(e) => setUrlInput(e.target.value)}
+                                        placeholder="http://..."
+                                        disabled={isDiscovering}
+                                        className="flex-1 min-w-0 px-3 py-2.5 text-sm border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
+                                    />
+                                    <button
+                                        onClick={() => {
+                                            setIsDiscovering(true);
+                                            fetch('/api/discover-robot')
+                                                .then(r => r.json())
+                                                .then(data => {
+                                                    if (data.found && data.url) {
+                                                        setUrlInput(data.url);
+                                                    }
+                                                })
+                                                .catch(() => {})
+                                                .finally(() => setIsDiscovering(false));
+                                        }}
+                                        disabled={isDiscovering}
+                                        className="h-11 w-11 flex items-center justify-center bg-blue-50 text-blue-600 border border-blue-200 rounded-xl text-sm font-semibold hover:bg-blue-100 active:bg-blue-200 transition-colors disabled:opacity-50 flex-shrink-0"
+                                        title="Scan for robot"
+                                    >
+                                        {isDiscovering ? (
+                                            <span className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                                        ) : (
+                                            <Target size={16} />
+                                        )}
+                                    </button>
+                                    <button
+                                        onClick={handleConnect}
+                                        disabled={isConnecting || isDiscovering}
+                                        className="h-11 px-4 bg-green-50 text-green-600 border border-green-200 rounded-xl text-sm font-semibold hover:bg-green-100 active:bg-green-200 transition-colors disabled:opacity-50 flex items-center gap-2 flex-shrink-0"
+                                    >
+                                        {isConnecting ? '...' : <Wifi size={16} />}
+                                    </button>
+                                </div>
                             </div>
                         )}
                     </>
