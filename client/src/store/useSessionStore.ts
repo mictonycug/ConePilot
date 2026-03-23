@@ -106,7 +106,7 @@ interface SessionState {
     missionDwellTime: number;
     missionWaypointIndex: number;
     missionWaypointTotal: number;
-    missionWaypointState: 'idle' | 'calibrating' | 'navigating' | 'dwelling' | 'completed';
+    missionWaypointState: 'idle' | 'calibrating' | 'navigating' | 'mechanism' | 'dwelling' | 'backing_up' | 'returning' | 'completed';
     missionDwellRemaining: number;
 
     // Mission Actions

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from ev3dev2.motor import LargeMotor
+import ev3dev.ev3 as ev3
 from time import sleep
 
 print("Connecting...")
@@ -21,8 +21,8 @@ def run_column(pos):
 def run_spirals(cone_no):
     spirals.run_to_abs_pos(speed_sp = spirals_speed, position_sp = (spirals_abs_pos + spirals_direction * cone_no * 360))
 
-column = LargeMotor(column_port)
-spirals = LargeMotor(spirals_port)
+column = ev3.LargeMotor(column_port)
+spirals = ev3.LargeMotor(spirals_port)
 
 print("Ready!")
 

@@ -7,7 +7,7 @@ Usage: python3 test_place.py
 import time
 from ev3dev2.motor import LargeMotor
 
-SPIRAL_PORT = 'outC'
+SPIRAL_PORT = 'outB'
 SPIRAL_DEG = 360
 SPIRAL_SPEED = 720
 

@@ -37,7 +37,7 @@ export interface RobotStatus {
     odom_pose: RobotPose;
     waypoint_index: number;
     waypoint_total: number;
-    waypoint_state: 'idle' | 'calibrating' | 'navigating' | 'dwelling' | 'completed';
+    waypoint_state: 'idle' | 'calibrating' | 'navigating' | 'mechanism' | 'dwelling' | 'backing_up' | 'returning' | 'completed';
     dwell_remaining: number;
     cone_chase_active: boolean;
     cone_chase: ConeChaseStatus | null;

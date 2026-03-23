@@ -3,14 +3,16 @@
 Test which motors are connected and run them individually.
 Usage: python3 test_motors.py
 """
-from ev3dev2.motor import LargeMotor, MediumMotor, OUTPUT_A, OUTPUT_B, OUTPUT_C, OUTPUT_D
-import time
+import ev3dev.ev3 as ev3
+
+LargeMotor = ev3.LargeMotor
+MediumMotor = ev3.MediumMotor
 
 PORTS = {
-    'outA': OUTPUT_A,
-    'outB': OUTPUT_B,
-    'outC': OUTPUT_C,
-    'outD': OUTPUT_D,
+    'outA': 'outA',
+    'outB': 'outB',
+    'outC': 'outC',
+    'outD': 'outD',
 }
 
 print("=" * 40)

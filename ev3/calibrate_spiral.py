@@ -5,7 +5,7 @@ Usage: python3 calibrate_spiral.py
 """
 from ev3dev2.motor import LargeMotor
 
-PORT = 'outC'
+PORT = 'outB'
 SPEED = 720
 
 motor = LargeMotor(PORT)

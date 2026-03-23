@@ -21,14 +21,13 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import ev3dev.ev3 as ev3
 
 # ── Motor config (from test2.py) ──────────────────────────
-COLUMN_PORT = 'outC'
+COLUMN_PORT = 'outA'
 COLUMN_DIRECTION = 1
 COLUMN_SPEED = 12
 COLUMN_POS_TOP = 100
 COLUMN_POS_BOTTOM = -100
-COLUMN_POS_STOP = 0
 
-SPIRALS_PORT = 'outA'
+SPIRALS_PORT = 'outB'
 SPIRALS_DIRECTION = 1
 SPIRALS_SPEED = 720
 
@@ -49,19 +48,16 @@ def run_column(pos):
 def column_reset():
     run_column(COLUMN_POS_TOP)
     time.sleep(8)
-    run_column(COLUMN_POS_STOP)
 
 
 def column_down():
     run_column(COLUMN_POS_BOTTOM)
     time.sleep(4)
-    run_column(COLUMN_POS_STOP)
 
 
 def column_up():
     run_column(COLUMN_POS_TOP)
     time.sleep(4)
-    run_column(COLUMN_POS_STOP)
 
 
 def run_spirals(cone_no):
@@ -74,23 +70,19 @@ def spirals_reset():
 
 
 def do_place():
-    """Drop a cone: lower column, spin spiral reverse (release), raise column."""
+    """Drop a cone: column stays up, spin spiral to release cone."""
     global cones, busy, last_action, last_error
     if busy:
         return False, 'mechanism busy'
     busy = True
     last_error = None
     try:
-        print("[PLACE] lowering column...")
-        column_down()
         cones -= 1
         if cones < 0:
             cones = 0
-        print("[PLACE] cones=%d  spinning spiral reverse (dropping cone)..." % cones)
+        print("[PLACE] cones=%d  spinning spiral (dropping cone)..." % cones)
         run_spirals(cones)
         time.sleep(2)
-        print("[PLACE] raising column...")
-        column_up()
         last_action = 'placed cone (remaining: %d)' % cones
         print("[PLACE] done. spiral pos=%d" % spirals.position)
         return True, last_action

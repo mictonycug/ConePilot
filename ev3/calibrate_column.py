@@ -3,12 +3,12 @@
 Calibrate the column/lift motor.
 Usage: python3 calibrate_column.py
 """
-from ev3dev2.motor import LargeMotor
+import ev3dev.ev3 as ev3
 
 PORT = 'outA'
 SPEED = 12
 
-motor = LargeMotor(PORT)
+motor = ev3.LargeMotor(PORT)
 if not motor.connected:
     print("No motor on " + PORT)
     exit(1)
@@ -49,27 +49,27 @@ while True:
     if action == 'u':
         print("  Moving to UP (%d)..." % up_pos)
         motor.run_to_abs_pos(speed_sp=SPEED, position_sp=up_pos, stop_action='hold')
-        motor.wait_until_not_moving(timeout=10000)
+        motor.wait_while('running', timeout=10000)
         print("  Position: %d" % motor.position)
 
     elif action == 'd':
         print("  Moving to DOWN (%d)..." % down_pos)
         motor.run_to_abs_pos(speed_sp=SPEED, position_sp=down_pos, stop_action='hold')
-        motor.wait_until_not_moving(timeout=10000)
+        motor.wait_while('running', timeout=10000)
         print("  Position: %d" % motor.position)
 
     elif action == 'g':
         pos = int(parts[1]) if len(parts) > 1 else 0
         print("  Going to %d..." % pos)
         motor.run_to_abs_pos(speed_sp=SPEED, position_sp=pos, stop_action='hold')
-        motor.wait_until_not_moving(timeout=10000)
+        motor.wait_while('running', timeout=10000)
         print("  Position: %d" % motor.position)
 
     elif action == 'n':
         deg = int(parts[1]) if len(parts) > 1 else 10
         print("  Nudging %d deg..." % deg)
         motor.run_to_rel_pos(speed_sp=SPEED, position_sp=deg, stop_action='hold')
-        motor.wait_until_not_moving(timeout=10000)
+        motor.wait_while('running', timeout=10000)
         print("  Position: %d" % motor.position)
 
     elif action == 'su':

@@ -655,7 +655,10 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
                                                     <span className="font-semibold text-text-primary">
                                                         {missionWaypointState === 'calibrating' && 'Calibrating UWB heading...'}
                                                         {missionWaypointState === 'navigating' && `Navigating to ${missionWaypointIndex + 1}/${missionWaypointTotal}`}
+                                                        {missionWaypointState === 'mechanism' && `Placing cone ${missionWaypointIndex + 1}/${missionWaypointTotal}...`}
                                                         {missionWaypointState === 'dwelling' && `Dwelling at ${missionWaypointIndex + 1}/${missionWaypointTotal} (${missionDwellRemaining}s)`}
+                                                        {missionWaypointState === 'backing_up' && `Backing up after cone ${missionWaypointIndex + 1}/${missionWaypointTotal}...`}
+                                                        {missionWaypointState === 'returning' && 'Returning to home position...'}
                                                         {missionWaypointState === 'completed' && (
                                                             <span className="flex items-center gap-1.5 text-green-600">
                                                                 <CheckCircle2 size={16} /> Mission Complete
