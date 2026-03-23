@@ -3,7 +3,7 @@ import { Circle, Text, Group, Image as KonvaImage, Rect } from 'react-konva';
 import useImage from 'use-image';
 import type { ConeData } from '../../store/useSessionStore';
 
-const BOUNDARY_MARGIN = 0.5; // 50cm margin from field edges
+const BOUNDARY_MARGIN = 0.25; // 25cm margin from field edges
 
 interface ConeNodeProps {
     cone: ConeData;
@@ -132,11 +132,11 @@ export const ConeNode: React.FC<ConeNodeProps> = ({ cone, scale, fieldHeight, fi
                     <Circle
                         radius={half * 0.85}
                         fill="transparent"
-                        stroke="#22C55E"
+                        stroke="#2563EB"
                         strokeWidth={2.5}
                     />
                     <Group x={-badgeOffset} y={-badgeOffset}>
-                        <Circle radius={Math.max(5, half * 0.35)} fill="#22C55E" />
+                        <Circle radius={Math.max(5, half * 0.35)} fill="#2563EB" />
                         <Text
                             text="✓"
                             fontSize={Math.max(6, half * 0.45)}

@@ -1,8 +1,12 @@
 import React, { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useSessionStore } from '../store/useSessionStore';
+import { useAuthStore } from '../store/useAuthStore';
 import { FieldCanvas } from '../components/session/FieldCanvas';
 import { SessionControls } from '../components/session/SessionControls';
+import { useTour } from '../hooks/useTour';
+import { SESSION_TOUR } from '../components/tour/tourSteps';
+import { TourOverlay } from '../components/tour/TourOverlay';
 
 export const SessionView: React.FC = () => {
     const { id } = useParams<{ id: string }>();
@@ -12,6 +16,9 @@ export const SessionView: React.FC = () => {
         isLoading,
         removeAllCones
     } = useSessionStore();
+
+    const { user } = useAuthStore();
+    const tour = useTour(`conepilot_tour_session_done_${user?.id ?? 'anon'}`, SESSION_TOUR);
 
     useEffect(() => {
         if (id) {
@@ -68,6 +75,17 @@ export const SessionView: React.FC = () => {
                     />
                 </div>
             </div>
+
+            {/* Guided Tour */}
+            {tour.active && tour.currentStep && (
+                <TourOverlay
+                    step={tour.currentStep}
+                    currentIndex={tour.currentIndex}
+                    totalSteps={tour.totalSteps}
+                    onNext={tour.next}
+                    onSkip={tour.skip}
+                />
+            )}
         </div>
     );
 };

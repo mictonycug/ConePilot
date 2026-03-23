@@ -32,7 +32,7 @@ export const ControlPanel: React.FC = () => {
             <div>
                 <h2 className="text-lg font-bold text-text-primary mb-1">Controls</h2>
                 <div className="flex items-center gap-2 text-sm text-text-secondary">
-                    <span className={`w-2 h-2 rounded-full ${isSimulating ? 'bg-green-500 animate-pulse' : 'bg-orange-500'}`}></span>
+                    <span className={`w-2 h-2 rounded-full ${isSimulating ? 'bg-blue-500 animate-pulse' : 'bg-orange-500'}`}></span>
                     {isSimulating ? 'PLACING CONES' : currentSession.status}
                 </div>
             </div>

@@ -2,7 +2,11 @@
 import React, { useEffect, useState } from 'react';
 import { Plus, Trash2, Pencil, X } from 'lucide-react';
 import { useSessionStore } from '../store/useSessionStore';
+import { useAuthStore } from '../store/useAuthStore';
 import { useNavigate } from 'react-router-dom';
+import { useTour } from '../hooks/useTour';
+import { DASHBOARD_TOUR } from '../components/tour/tourSteps';
+import { TourOverlay } from '../components/tour/TourOverlay';
 
 const LOCKED_FIELD_WIDTH = 3.5;
 const LOCKED_FIELD_HEIGHT = 3.0;
@@ -28,7 +32,7 @@ const CreateSessionModal: React.FC<{ onClose: () => void; onCreate: (name: strin
             >
                 {/* Header */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-                    <h2 className="text-lg font-semibold text-text-primary">New Session</h2>
+                    <h2 className="text-lg font-semibold text-text-primary">New Layout</h2>
                     <button
                         onClick={onClose}
                         className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
@@ -41,7 +45,7 @@ const CreateSessionModal: React.FC<{ onClose: () => void; onCreate: (name: strin
                 <form onSubmit={handleSubmit} className="px-6 py-5 space-y-5">
                     {/* Name */}
                     <div>
-                        <label className="block text-sm font-medium text-text-secondary mb-1.5">Session Name</label>
+                        <label className="block text-sm font-medium text-text-secondary mb-1.5">Layout Name</label>
                         <input
                             type="text"
                             value={name}
@@ -94,7 +98,7 @@ const CreateSessionModal: React.FC<{ onClose: () => void; onCreate: (name: strin
                             disabled={isLoading || !name.trim()}
                             className="px-5 py-2 text-sm font-medium bg-primary text-white rounded-lg hover:bg-opacity-90 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            {isLoading ? 'Creating...' : 'Create Session'}
+                            {isLoading ? 'Creating...' : 'Create Layout'}
                         </button>
                     </div>
                 </form>
@@ -105,8 +109,10 @@ const CreateSessionModal: React.FC<{ onClose: () => void; onCreate: (name: strin
 
 export const Dashboard: React.FC = () => {
     const { sessions, loadSessions, createSession, deleteSession, renameSession, isLoading } = useSessionStore();
+    const { user } = useAuthStore();
     const navigate = useNavigate();
     const [showCreateModal, setShowCreateModal] = useState(false);
+    const tour = useTour(`conepilot_tour_dashboard_done_${user?.id ?? 'anon'}`, DASHBOARD_TOUR);
 
     console.log('Dashboard render. Sessions:', sessions.length, 'IsLoading:', isLoading);
 
@@ -127,23 +133,23 @@ export const Dashboard: React.FC = () => {
 
     const handleDeleteSession = async (e: React.MouseEvent, id: string) => {
         e.stopPropagation();
-        if (window.confirm('Are you sure you want to delete this session?')) {
+        if (window.confirm('Are you sure you want to delete this layout?')) {
             try {
                 await deleteSession(id);
             } catch (err) {
-                console.error("Failed to delete session", err);
+                console.error("Failed to delete layout", err);
             }
         }
     };
 
     const handleRenameSession = async (e: React.MouseEvent, id: string, currentName: string) => {
         e.stopPropagation();
-        const newName = window.prompt("Enter new session name:", currentName);
+        const newName = window.prompt("Enter new layout name:", currentName);
         if (newName && newName !== currentName) {
             try {
                 await renameSession(id, newName);
             } catch (err) {
-                console.error("Failed to rename session", err);
+                console.error("Failed to rename layout", err);
             }
         }
     };
@@ -153,17 +159,18 @@ export const Dashboard: React.FC = () => {
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
                 <div className="flex items-center justify-between mb-8">
                     <div>
-                        <h1 className="text-2xl font-bold text-text-primary">Your Sessions</h1>
+                        <h1 className="text-2xl font-bold text-text-primary">Your Layouts</h1>
                         <p className="text-text-secondary mt-1">Manage and track your autonomous training drills</p>
                     </div>
 
                     <button
+                        data-tour="new-layout"
                         onClick={() => setShowCreateModal(true)}
                         disabled={isLoading}
                         className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg font-medium hover:bg-opacity-90 transition-all shadow-sm active:scale-95 disabled:opacity-50"
                     >
                         <Plus size={20} />
-                        New Session
+                        New Layout
                     </button>
                 </div>
 
@@ -173,10 +180,10 @@ export const Dashboard: React.FC = () => {
                         <div className="mx-auto w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mb-4">
                             <span className="text-2xl text-gray-300">📋</span>
                         </div>
-                        <h3 className="text-lg font-medium text-text-primary">No sessions yet</h3>
-                        <p className="text-text-secondary mt-2 mb-6">Create your first session to start placing cones.</p>
+                        <h3 className="text-lg font-medium text-text-primary">No layouts yet</h3>
+                        <p className="text-text-secondary mt-2 mb-6">Create your first layout to start placing cones.</p>
                         <button onClick={() => setShowCreateModal(true)} className="text-primary font-medium hover:underline">
-                            + Create New Session
+                            + Create New Layout
                         </button>
                     </div>
                 ) : (
@@ -190,21 +197,17 @@ export const Dashboard: React.FC = () => {
                                 <div className="flex justify-between items-start mb-4">
                                     <h3 className="font-semibold text-text-primary truncate">{session.name}</h3>
                                     <div className="flex items-center gap-2">
-                                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${session.status === 'COMPLETED' ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'
-                                            }`}>
-                                            {session.status}
-                                        </span>
                                         <button
                                             onClick={(e) => handleRenameSession(e, session.id, session.name)}
                                             className="p-1 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded transition-colors"
-                                            title="Rename Session"
+                                            title="Rename Layout"
                                         >
                                             <Pencil size={16} />
                                         </button>
                                         <button
                                             onClick={(e) => handleDeleteSession(e, session.id)}
-                                            className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
-                                            title="Delete Session"
+                                            className="p-1 text-gray-400 hover:text-orange-500 hover:bg-orange-50 rounded transition-colors"
+                                            title="Delete Layout"
                                         >
                                             <Trash2 size={16} />
                                         </button>
@@ -219,12 +222,23 @@ export const Dashboard: React.FC = () => {
                 )}
             </div>
 
-            {/* Create Session Modal */}
+            {/* Create Layout Modal */}
             {showCreateModal && (
                 <CreateSessionModal
                     onClose={() => setShowCreateModal(false)}
                     onCreate={handleCreateSession}
                     isLoading={isLoading}
+                />
+            )}
+
+            {/* Guided Tour */}
+            {tour.active && tour.currentStep && (
+                <TourOverlay
+                    step={tour.currentStep}
+                    currentIndex={tour.currentIndex}
+                    totalSteps={tour.totalSteps}
+                    onNext={tour.next}
+                    onSkip={tour.skip}
                 />
             )}
         </div>

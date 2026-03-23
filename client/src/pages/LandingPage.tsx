@@ -26,7 +26,7 @@ export const LandingPage: React.FC = () => {
                         to="/login"
                         className="px-8 py-4 bg-primary text-white rounded-lg font-medium text-lg hover:bg-opacity-90 transition-all shadow-lg hover:shadow-xl"
                     >
-                        Get Started
+                        Log In
                     </Link>
                     <Link
                         to="/register"

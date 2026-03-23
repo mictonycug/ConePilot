@@ -13,8 +13,8 @@ export default {
                 'text-primary': '#1F1F1F',
                 'text-secondary': '#6B6B6B',
                 border: '#E5E5E5',
-                success: '#10B981',
-                error: '#EF4444',
+                success: '#2563EB',
+                error: '#DC6B1A',
             },
             fontFamily: {
                 sans: ['Söhne', 'Inter', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
