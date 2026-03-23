@@ -188,8 +188,12 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
         try {
             // Calculate TSP path
             const points = currentSession.cones.map(c => ({ id: c.id, x: c.x, y: c.y }));
-            const path = calculateOptimalPath(points, { id: 'start', x: 0, y: 0 });
-            const simplePath = [{ x: 0, y: 0 }, ...path.map(p => ({ x: p.x, y: p.y }))];
+            const robotPos = useSessionStore.getState().robotPose;
+            const startPos = robotPos
+                ? { id: 'start', x: robotPos.x, y: robotPos.y }
+                : { id: 'start', x: 0, y: 0 };
+            const path = calculateOptimalPath(points, startPos);
+            const simplePath = [{ x: startPos.x, y: startPos.y }, ...path.map(p => ({ x: p.x, y: p.y }))];
             setOptimizedPath(simplePath);
             resetSimulationStats();
 
