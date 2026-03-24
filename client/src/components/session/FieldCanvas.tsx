@@ -134,7 +134,7 @@ const ConeImage = ({ x, y, opacity = 1, rotation = 0, size = 30 }: { x: number, 
 };
 
 export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height: _height }) => {
-    const { currentSession, addCone, updateConePosition, removeCone, optimizedPath, robotPose, robotConnected, missionConeIds, toggleMissionCone, isReadOnly, isPlacingCone, pendingCone, collectionActive, collectionTargetConeId, collectionPhase, collectionResults, ultrasonicReadings, navAvoidanceState } = useSessionStore();
+    const { currentSession, addCone, updateConePosition, removeCone, robotPose, robotConnected, missionConeIds, toggleMissionCone, isReadOnly, isPlacingCone, pendingCone, collectionActive, collectionTargetConeId, collectionPhase, collectionResults, ultrasonicReadings, navAvoidanceState } = useSessionStore();
     const stageRef = useRef<any>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [mousePos, setMousePos] = useState<{ x: number, y: number } | null>(null);
@@ -341,9 +341,6 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
         if (isMajor) labels.push(<Text key={`ly${i}`} x={-labelOffset} y={i * SCALE - 6} text={`${fH - i}m`} fontSize={labelFontSize} fill="#52525B" />);
     }
 
-    // Path Line Points (flip Y for canvas)
-    const pathPoints = optimizedPath.flatMap(p => [p.x * SCALE, fieldToCanvasY(p.y)]);
-
     const stageWidth = containerSize.width || totalWidth;
     const stageHeight = containerSize.height || totalHeight;
 
@@ -415,18 +412,6 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
                         );
                     })()}
 
-                    {/* Path Lines */}
-                    {pathPoints.length > 0 && (
-                        <Line
-                            points={pathPoints}
-                            stroke="#000000"
-                            strokeWidth={Math.max(1, 2 * strokeScale)}
-                            dash={[10, 5]}
-                            lineCap="round"
-                            lineJoin="round"
-                            opacity={0.8}
-                        />
-                    )}
 
                     {/* Active Cones */}
                     {currentSession.cones.map((cone) => (

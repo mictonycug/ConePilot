@@ -17,13 +17,6 @@ export const LandingPage: React.FC = () => {
 
                 {/* Foreground content */}
                 <div className="relative z-10 flex flex-col items-center">
-                    {/* Robot icon with ping indicator */}
-                    <div className="mb-6 md:mb-8 p-4 bg-white rounded-2xl shadow-sm border border-border relative">
-                        <span className="text-4xl">🤖</span>
-                        <span className="absolute -top-1 -right-1 w-3 h-3 bg-success rounded-full animate-ping" />
-                        <span className="absolute -top-1 -right-1 w-3 h-3 bg-success rounded-full" />
-                    </div>
-
                     <h1 className="text-4xl sm:text-5xl md:text-7xl font-bold tracking-tighter mb-4 md:mb-6 text-text-primary">
                         Welcome to the New Era
                         <br />
