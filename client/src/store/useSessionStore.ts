@@ -667,10 +667,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // Debug Mode Actions
     setDebugMode: (enabled: boolean) => {
         if (enabled) {
+            const session = get().currentSession;
+            const fw = session?.fieldWidth ?? 20;
+            const fh = session?.fieldHeight ?? 20;
+            // Spawn in the middle 50% of the field so pathing is visually testable
+            const rx = fw * 0.25 + Math.random() * fw * 0.5;
+            const ry = fh * 0.25 + Math.random() * fh * 0.5;
             set({
                 debugMode: true,
                 robotConnected: true,
-                robotPose: { x: 0, y: 0, theta: 0 },
+                robotPose: { x: rx, y: ry, theta: Math.random() * Math.PI * 2 },
             });
         } else {
             const state = get();

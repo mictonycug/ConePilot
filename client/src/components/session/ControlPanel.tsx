@@ -11,11 +11,12 @@ export const ControlPanel: React.FC = () => {
     const handleStartPlacing = () => {
         // Calculate Path
         const points = currentSession.cones.map(c => ({ id: c.id, x: c.x, y: c.y }));
-        // Add start path (0,0)
-        const path = calculateOptimalPath(points, { id: 'start', x: 0, y: 0 });
-
-        // Convert to simple points for store
-        const simplePath = [{ x: 0, y: 0 }, ...path.map(p => ({ x: p.x, y: p.y }))];
+        const robotPos = useSessionStore.getState().robotPose;
+        const startPos = robotPos
+            ? { id: 'start', x: robotPos.x, y: robotPos.y }
+            : { id: 'start', x: 0, y: 0 };
+        const path = calculateOptimalPath(points, startPos);
+        const simplePath = [{ x: startPos.x, y: startPos.y }, ...path.map(p => ({ x: p.x, y: p.y }))];
         setOptimizedPath(simplePath);
 
         // Start Simulation
@@ -32,7 +33,7 @@ export const ControlPanel: React.FC = () => {
             <div>
                 <h2 className="text-lg font-bold text-text-primary mb-1">Controls</h2>
                 <div className="flex items-center gap-2 text-sm text-text-secondary">
-                    <span className={`w-2 h-2 rounded-full ${isSimulating ? 'bg-green-500 animate-pulse' : 'bg-orange-500'}`}></span>
+                    <span className={`w-2 h-2 rounded-full ${isSimulating ? 'bg-blue-500 animate-pulse' : 'bg-orange-500'}`}></span>
                     {isSimulating ? 'PLACING CONES' : currentSession.status}
                 </div>
             </div>

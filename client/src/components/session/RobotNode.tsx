@@ -202,9 +202,9 @@ export const RobotNode: React.FC<RobotNodeProps> = ({ x, y, scale, path }) => {
                 {/* Back right wheel */}
                 <Rect x={robotWidth - wheelW} y={robotHeight - wheelH} width={wheelW} height={wheelH} fill="#333" cornerRadius={2} />
                 {/* Robot body */}
-                <Rect x={(robotWidth - bodyW) / 2} y={(robotHeight - bodyH) / 2} width={bodyW} height={bodyH} fill="#059669" cornerRadius={4} shadowBlur={5} shadowOpacity={0.3} />
+                <Rect x={(robotWidth - bodyW) / 2} y={(robotHeight - bodyH) / 2} width={bodyW} height={bodyH} fill="#2563EB" cornerRadius={4} shadowBlur={5} shadowOpacity={0.3} />
                 {/* Sensor/indicator */}
-                <Rect x={robotWidth - sensorW - (robotWidth - bodyW) / 2} y={(robotHeight - sensorH) / 2} width={sensorW} height={sensorH} fill="#A7F3D0" cornerRadius={1} />
+                <Rect x={robotWidth - sensorW - (robotWidth - bodyW) / 2} y={(robotHeight - sensorH) / 2} width={sensorW} height={sensorH} fill="#93C5FD" cornerRadius={1} />
             </Group>
         </Group>
     );

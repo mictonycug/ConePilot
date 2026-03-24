@@ -102,17 +102,17 @@ const US_BEAM_WIDTH = 30;          // degrees
 const US_MAX_DISPLAY_CM = 100;     // cap visual at 1m — beyond this is noise
 
 function usZoneColor(cm: number) {
-    if (cm < 15)  return { fill: 'rgba(239,68,68,0.25)', stroke: 'rgba(239,68,68,0.6)' };   // red — hard stop
-    if (cm < 40)  return { fill: 'rgba(234,179,8,0.18)', stroke: 'rgba(234,179,8,0.5)' };   // yellow — slowing
-    return { fill: 'rgba(34,197,94,0.10)', stroke: 'rgba(34,197,94,0.3)' };                  // green — clear
+    if (cm < 15)  return { fill: 'rgba(220,107,26,0.25)', stroke: 'rgba(220,107,26,0.6)' };  // orange — hard stop
+    if (cm < 40)  return { fill: 'rgba(234,179,8,0.18)', stroke: 'rgba(234,179,8,0.5)' };    // yellow — slowing
+    return { fill: 'rgba(37,99,235,0.10)', stroke: 'rgba(37,99,235,0.3)' };                   // blue — clear
 }
 
 const SCALE = 120; // 120px/m — high resolution for small fields
 const ZOOM_STEP = 0.25;
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 5;
-const SNAP_OPTIONS = [0, 0.1, 0.25, 0.5];
-const BOUNDARY_MARGIN = 0.5; // 50cm margin from field edges
+const SNAP_OPTIONS = [0, 0.125, 0.25, 0.5];
+const BOUNDARY_MARGIN = 0.25; // 25cm margin from field edges
 
 const snapVal = (v: number, size: number) => size > 0 ? Math.round(v / size) * size : v;
 
@@ -134,7 +134,7 @@ const ConeImage = ({ x, y, opacity = 1, rotation = 0, size = 30 }: { x: number, 
 };
 
 export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height: _height }) => {
-    const { currentSession, addCone, updateConePosition, removeCone, optimizedPath, robotPose, robotConnected, missionConeIds, toggleMissionCone, isReadOnly, isPlacingCone, pendingCone, collectionActive, collectionTargetConeId, collectionPhase, collectionResults, ultrasonicReadings, navAvoidanceState } = useSessionStore();
+    const { currentSession, addCone, updateConePosition, removeCone, robotPose, robotConnected, missionConeIds, toggleMissionCone, isReadOnly, isPlacingCone, pendingCone, collectionActive, collectionTargetConeId, collectionPhase, collectionResults, ultrasonicReadings, navAvoidanceState } = useSessionStore();
     const stageRef = useRef<any>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [mousePos, setMousePos] = useState<{ x: number, y: number } | null>(null);
@@ -309,7 +309,7 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
             const isHalf = Math.abs((i % 1) - 0.5) < 0.01;
             gridLines.push(
                 <Line key={`sv${i}`} points={[i * SCALE, 0, i * SCALE, fieldHeightPx]}
-                    stroke={isHalf ? "#E8E8EC" : "#F0F0F3"}
+                    stroke={isHalf ? "#B0B0B8" : "#CCCCD0"}
                     strokeWidth={Math.max(0.3, (isHalf ? 0.5 : 0.3) * strokeScale)} />
             );
         }
@@ -318,7 +318,7 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
             const isHalf = Math.abs((i % 1) - 0.5) < 0.01;
             gridLines.push(
                 <Line key={`sh${i}`} points={[0, i * SCALE, fieldWidthPx, i * SCALE]}
-                    stroke={isHalf ? "#E8E8EC" : "#F0F0F3"}
+                    stroke={isHalf ? "#B0B0B8" : "#CCCCD0"}
                     strokeWidth={Math.max(0.3, (isHalf ? 0.5 : 0.3) * strokeScale)} />
             );
         }
@@ -328,27 +328,24 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
     for (let i = 0; i <= fW; i += 1) {
         const isMajor = i % majorStep === 0;
         gridLines.push(
-            <Line key={`v${i}`} points={[i * SCALE, 0, i * SCALE, fieldHeightPx]} stroke={isMajor ? "#D4D4D8" : "#E5E5E5"} strokeWidth={Math.max(0.5, (isMajor ? 0.75 : 0.5) * strokeScale)} dash={isMajor ? [] : [4, 4]} />
+            <Line key={`v${i}`} points={[i * SCALE, 0, i * SCALE, fieldHeightPx]} stroke={isMajor ? "#8B8B94" : "#A1A1AA"} strokeWidth={Math.max(0.5, (isMajor ? 1 : 0.75) * strokeScale)} dash={isMajor ? [] : [4, 4]} />
         );
-        if (isMajor) labels.push(<Text key={`lx${i}`} x={i * SCALE - 10} y={fieldHeightPx + labelOffset * 0.4} text={`${i}m`} fontSize={labelFontSize} fill="#6B6B6B" />);
+        if (isMajor) labels.push(<Text key={`lx${i}`} x={i * SCALE - 10} y={fieldHeightPx + labelOffset * 0.4} text={`${i}m`} fontSize={labelFontSize} fill="#52525B" />);
     }
     for (let i = 0; i <= fH; i += 1) {
         const isMajor = i % majorStep === 0;
         gridLines.push(
-            <Line key={`h${i}`} points={[0, i * SCALE, fieldWidthPx, i * SCALE]} stroke={isMajor ? "#D4D4D8" : "#E5E5E5"} strokeWidth={Math.max(0.5, (isMajor ? 0.75 : 0.5) * strokeScale)} dash={isMajor ? [] : [4, 4]} />
+            <Line key={`h${i}`} points={[0, i * SCALE, fieldWidthPx, i * SCALE]} stroke={isMajor ? "#8B8B94" : "#A1A1AA"} strokeWidth={Math.max(0.5, (isMajor ? 1 : 0.75) * strokeScale)} dash={isMajor ? [] : [4, 4]} />
         );
         // Y labels: flipped — canvas row i shows field value (fH - i)
-        if (isMajor) labels.push(<Text key={`ly${i}`} x={-labelOffset} y={i * SCALE - 6} text={`${fH - i}m`} fontSize={labelFontSize} fill="#6B6B6B" />);
+        if (isMajor) labels.push(<Text key={`ly${i}`} x={-labelOffset} y={i * SCALE - 6} text={`${fH - i}m`} fontSize={labelFontSize} fill="#52525B" />);
     }
-
-    // Path Line Points (flip Y for canvas)
-    const pathPoints = optimizedPath.flatMap(p => [p.x * SCALE, fieldToCanvasY(p.y)]);
 
     const stageWidth = containerSize.width || totalWidth;
     const stageHeight = containerSize.height || totalHeight;
 
     const snapLabel = snapSize > 0
-        ? (snapSize < 1 ? `${Math.round(snapSize * 100)}cm` : `${snapSize}m`)
+        ? (snapSize < 1 ? `${parseFloat((snapSize * 100).toFixed(1))}cm` : `${snapSize}m`)
         : 'OFF';
 
     return (
@@ -377,7 +374,7 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
                 ref={stageRef}
             >
                 <Layer x={PADDING} y={PADDING}>
-                    <Rect width={fieldWidthPx} height={fieldHeightPx} fill="#F4F4F5" stroke="#D4D4D8" strokeWidth={Math.max(0.5, 1 * strokeScale)} />
+                    <Rect width={fieldWidthPx} height={fieldHeightPx} fill="#F4F4F5" stroke="#8B8B94" strokeWidth={Math.max(0.5, 1.5 * strokeScale)} />
 
                     {/* Boundary margin zone (50cm from edges) */}
                     {(() => {
@@ -415,18 +412,6 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
                         );
                     })()}
 
-                    {/* Path Lines */}
-                    {pathPoints.length > 0 && (
-                        <Line
-                            points={pathPoints}
-                            stroke="#000000"
-                            strokeWidth={Math.max(1, 2 * strokeScale)}
-                            dash={[10, 5]}
-                            lineCap="round"
-                            lineJoin="round"
-                            opacity={0.8}
-                        />
-                    )}
 
                     {/* Active Cones */}
                     {currentSession.cones.map((cone) => (
@@ -462,7 +447,7 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
                         if (result.status === 'collected') {
                             return (
                                 <Group key={`cc-${cone.id}`} x={cx} y={cy} listening={false}>
-                                    <Circle radius={coneSize * 0.6} fill="#22C55E" opacity={0.7} />
+                                    <Circle radius={coneSize * 0.6} fill="#2563EB" opacity={0.7} />
                                     {/* Checkmark */}
                                     <Line
                                         points={[-4, 0, -1, 3, 5, -4]}
@@ -477,7 +462,7 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
                         if (result.status === 'missing') {
                             return (
                                 <Group key={`cm-${cone.id}`} x={cx} y={cy} listening={false}>
-                                    <Circle radius={coneSize * 0.6} fill="#EF4444" opacity={0.7} />
+                                    <Circle radius={coneSize * 0.6} fill="#DC6B1A" opacity={0.7} />
                                     {/* X mark */}
                                     <Line points={[-3, -3, 3, 3]} stroke="white" strokeWidth={2} lineCap="round" />
                                     <Line points={[3, -3, -3, 3]} stroke="white" strokeWidth={2} lineCap="round" />
@@ -555,7 +540,7 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
                                 navAvoidanceState === 'adjusting' ? 'ADJUST' : ''
                             }
                             fontSize={9}
-                            fill={navAvoidanceState === 'hard_avoid' ? '#EF4444' : '#F59E0B'}
+                            fill={navAvoidanceState === 'hard_avoid' ? '#DC6B1A' : '#F59E0B'}
                             fontStyle="bold"
                             listening={false}
                         />
@@ -574,7 +559,7 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
                                 collectionPhase === 'missing' ? 'MISS' : ''
                             }
                             fontSize={10}
-                            fill={collectionPhase === 'missing' ? '#EF4444' : '#06B6D4'}
+                            fill={collectionPhase === 'missing' ? '#DC6B1A' : '#2563EB'}
                             fontStyle="bold"
                             listening={false}
                         />
@@ -604,6 +589,7 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
 
             {/* Bottom-left: Snap toggle */}
             <button
+                data-tour="snap-toggle"
                 onClick={handleCycleSnap}
                 className={`absolute bottom-3 left-3 z-10 flex items-center gap-2 px-3.5 py-2.5 rounded-xl shadow-md border text-sm font-semibold select-none transition-colors active:scale-95 ${
                     snapSize > 0
@@ -622,7 +608,7 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
             </button>
 
             {/* Bottom-right: Zoom controls */}
-            <div className="absolute bottom-3 right-3 flex flex-col gap-2 z-10">
+            <div data-tour="zoom-controls" className="absolute bottom-3 right-3 flex flex-col gap-2 z-10">
                 <button
                     onClick={handleZoomIn}
                     disabled={zoom >= MAX_ZOOM}

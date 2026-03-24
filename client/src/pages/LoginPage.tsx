@@ -26,7 +26,7 @@ export const LoginPage: React.FC = () => {
                 <h2 className="text-2xl font-bold mb-6 text-text-primary text-center">Login to ConePilot</h2>
 
                 {error && (
-                    <div className="mb-4 p-3 bg-red-50 text-error text-sm rounded-lg border border-red-100">
+                    <div className="mb-4 p-3 bg-orange-50 text-error text-sm rounded-lg border border-orange-100">
                         {error}
                     </div>
                 )}

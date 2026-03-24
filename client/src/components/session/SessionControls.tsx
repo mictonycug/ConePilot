@@ -188,8 +188,12 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
         try {
             // Calculate TSP path
             const points = currentSession.cones.map(c => ({ id: c.id, x: c.x, y: c.y }));
-            const path = calculateOptimalPath(points, { id: 'start', x: 0, y: 0 });
-            const simplePath = [{ x: 0, y: 0 }, ...path.map(p => ({ x: p.x, y: p.y }))];
+            const robotPos = useSessionStore.getState().robotPose;
+            const startPos = robotPos
+                ? { id: 'start', x: robotPos.x, y: robotPos.y }
+                : { id: 'start', x: 0, y: 0 };
+            const path = calculateOptimalPath(points, startPos);
+            const simplePath = [{ x: startPos.x, y: startPos.y }, ...path.map(p => ({ x: p.x, y: p.y }))];
             setOptimizedPath(simplePath);
             resetSimulationStats();
 
@@ -275,7 +279,7 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
                 <button
                     onClick={onClearAll}
                     disabled={coneCount === 0}
-                    className="h-12 px-5 flex items-center gap-2 text-sm font-semibold text-red-600 bg-red-50 border border-red-200 rounded-xl hover:bg-red-100 active:bg-red-200 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                    className="h-12 px-5 flex items-center gap-2 text-sm font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-xl hover:bg-amber-100 active:bg-amber-200 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                 >
                     <Trash2 size={18} />
                     Clear All
@@ -284,12 +288,12 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
 
             {/* Connection timeout warning */}
             {connectionTimedOut && (
-                <div className="p-3 bg-red-50 border border-red-300 rounded-xl">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-red-700">
+                <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-amber-700">
                         <WifiOff size={16} />
                         Connection Timed Out
                     </div>
-                    <p className="text-xs text-red-600 mt-1 leading-relaxed">
+                    <p className="text-xs text-amber-600 mt-1 leading-relaxed">
                         Could not connect to the robot within 30 seconds. Check the URL and try again.
                     </p>
                 </div>
@@ -331,8 +335,8 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
                             disabled={isReadOnly}
                             className={`ml-auto flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 ${
                                 obstacleAvoidanceEnabled
-                                    ? 'bg-green-100 text-green-700 border border-green-300'
-                                    : 'bg-red-50 text-red-600 border border-red-200'
+                                    ? 'bg-blue-100 text-blue-700 border border-blue-300'
+                                    : 'bg-amber-50 text-amber-700 border border-amber-200'
                             }`}
                             title={obstacleAvoidanceEnabled ? 'Obstacle avoidance ON' : 'Obstacle avoidance OFF'}
                         >
@@ -367,9 +371,10 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
             {/* Start / Stop Placing */}
             {!isSimulating ? (
                 <button
+                    data-tour="start-placing"
                     onClick={handleStartPlacing}
                     disabled={coneCount === 0 || isStartingPlacement || (!debugMode && isReadOnly)}
-                    className="h-14 w-full flex items-center justify-center gap-3 bg-green-500 text-white rounded-xl hover:bg-green-600 active:bg-green-700 transition-colors text-base font-bold disabled:opacity-30 shadow-sm"
+                    className="h-14 w-full flex items-center justify-center gap-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 active:bg-blue-800 transition-colors text-base font-bold disabled:opacity-30 shadow-sm"
                 >
                     {isStartingPlacement ? (
                         <>
@@ -388,7 +393,7 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
                     <button
                         onClick={handleStopPlacing}
                         disabled={!debugMode && isReadOnly}
-                        className="h-14 w-full flex items-center justify-center gap-3 bg-red-500 text-white rounded-xl hover:bg-red-600 active:bg-red-700 transition-colors text-base font-bold disabled:opacity-30 shadow-sm"
+                        className="h-14 w-full flex items-center justify-center gap-3 bg-orange-500 text-white rounded-xl hover:bg-orange-600 active:bg-orange-700 transition-colors text-base font-bold disabled:opacity-30 shadow-sm"
                     >
                         <Square size={22} />
                         Stop Placing
@@ -408,6 +413,7 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
             {/* Collect Cones */}
             {!collectionActive ? (
                 <button
+                    data-tour="collect-cones"
                     onClick={startCollection}
                     disabled={coneCount === 0 || isSimulating || missionActive || coneChaseActive || lockOnActive || (!debugMode && (!robotConnected || isReadOnly))}
                     className="h-14 w-full flex items-center justify-center gap-3 bg-amber-500 text-white rounded-xl hover:bg-amber-600 active:bg-amber-700 transition-colors text-base font-bold disabled:opacity-30 shadow-sm"
@@ -437,11 +443,11 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
                         {collectionResults.length > 0 && (
                             <div className="flex gap-3 text-xs text-text-secondary">
                                 <span className="flex items-center gap-1">
-                                    <CheckCircle2 size={12} className="text-green-500" />
+                                    <CheckCircle2 size={12} className="text-blue-600" />
                                     {collectionResults.filter(r => r.status === 'collected').length} collected
                                 </span>
                                 <span className="flex items-center gap-1">
-                                    <XCircle size={12} className="text-red-500" />
+                                    <XCircle size={12} className="text-orange-500" />
                                     {collectionResults.filter(r => r.status === 'missing').length} missing
                                 </span>
                                 <span>
@@ -454,7 +460,7 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
                     <button
                         onClick={stopCollection}
                         disabled={isReadOnly}
-                        className="h-14 w-full flex items-center justify-center gap-3 bg-red-500 text-white rounded-xl hover:bg-red-600 active:bg-red-700 transition-colors text-base font-bold disabled:opacity-30 shadow-sm"
+                        className="h-14 w-full flex items-center justify-center gap-3 bg-orange-500 text-white rounded-xl hover:bg-orange-600 active:bg-orange-700 transition-colors text-base font-bold disabled:opacity-30 shadow-sm"
                     >
                         <Square size={22} />
                         Stop Collection
@@ -483,6 +489,118 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
 
                 {devToolsOpen && (
                     <div className="p-3 border-t border-border flex flex-col gap-3">
+                        {/* Robot Connection */}
+                        <div className="p-3 bg-gray-50 rounded-xl border border-border">
+                            {debugMode ? (
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 bg-purple-100">
+                                        <Bug size={20} className="text-purple-600" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-sm font-semibold text-text-primary">
+                                            Debug Mode
+                                        </div>
+                                        <div className="text-xs text-purple-600">
+                                            Simulated robot active
+                                        </div>
+                                    </div>
+                                    <span className="px-2.5 py-1 bg-purple-100 text-purple-700 rounded-lg text-xs font-semibold">
+                                        (Debug)
+                                    </span>
+                                </div>
+                            ) : (
+                                <>
+                                    <div className="flex items-center gap-3">
+                                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                                            robotConnected ? 'bg-blue-100' : 'bg-gray-200'
+                                        }`}>
+                                            <Bot size={20} className={robotConnected ? 'text-blue-600' : 'text-gray-400'} />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="text-sm font-semibold text-text-primary">
+                                                {robotConnected ? 'Connected' : 'ConePilot'}
+                                            </div>
+                                            <div className="text-xs text-text-secondary truncate">
+                                                {robotConnected ? urlInput : 'Not connected'}
+                                            </div>
+                                        </div>
+                                        {robotConnected && (
+                                            <button
+                                                onClick={disconnectRobot}
+                                                className="h-11 px-4 bg-orange-50 text-orange-600 border border-orange-200 rounded-xl text-sm font-semibold hover:bg-orange-100 active:bg-orange-200 transition-colors flex items-center gap-2"
+                                            >
+                                                <WifiOff size={16} />
+                                                <span className="hidden sm:inline">Disconnect</span>
+                                            </button>
+                                        )}
+                                    </div>
+                                    {!robotConnected && (
+                                        <div className="flex flex-col gap-2 mt-2">
+                                            <div className="flex gap-2">
+                                                <input
+                                                    type="text"
+                                                    value={isDiscovering ? 'Scanning network...' : urlInput}
+                                                    onChange={(e) => setUrlInput(e.target.value)}
+                                                    placeholder="http://..."
+                                                    disabled={isDiscovering}
+                                                    className="flex-1 min-w-0 px-3 py-2.5 text-sm border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
+                                                />
+                                                <button
+                                                    onClick={() => {
+                                                        setIsDiscovering(true);
+                                                        fetch('/api/discover-robot')
+                                                            .then(r => r.json())
+                                                            .then(data => {
+                                                                if (data.found && data.url) {
+                                                                    setUrlInput(data.url);
+                                                                }
+                                                            })
+                                                            .catch(() => {})
+                                                            .finally(() => setIsDiscovering(false));
+                                                    }}
+                                                    disabled={isDiscovering}
+                                                    className="h-11 w-11 flex items-center justify-center bg-blue-50 text-blue-600 border border-blue-200 rounded-xl text-sm font-semibold hover:bg-blue-100 active:bg-blue-200 transition-colors disabled:opacity-50 flex-shrink-0"
+                                                    title="Scan for robot"
+                                                >
+                                                    {isDiscovering ? (
+                                                        <span className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                                                    ) : (
+                                                        <Target size={16} />
+                                                    )}
+                                                </button>
+                                                <button
+                                                    onClick={handleConnect}
+                                                    disabled={isConnecting || isDiscovering}
+                                                    className="h-11 px-4 bg-blue-50 text-blue-600 border border-blue-200 rounded-xl text-sm font-semibold hover:bg-blue-100 active:bg-blue-200 transition-colors disabled:opacity-50 flex items-center gap-2 flex-shrink-0"
+                                                >
+                                                    {isConnecting ? '...' : <Wifi size={16} />}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </>
+                            )}
+
+                            {/* Debug Mode Toggle */}
+                            <div className={`flex items-center justify-between mt-3 pt-3 border-t border-border ${robotConnected && !debugMode ? 'opacity-40 pointer-events-none' : ''}`}>
+                                <div className="flex items-center gap-2 text-sm text-text-secondary">
+                                    <Bug size={16} />
+                                    Debug Mode
+                                </div>
+                                <button
+                                    onClick={() => setDebugMode(!debugMode)}
+                                    disabled={robotConnected && !debugMode}
+                                    className={`relative w-11 h-6 rounded-full transition-colors ${
+                                        debugMode ? 'bg-purple-500' : 'bg-gray-300'
+                                    }`}
+                                >
+                                    <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                                        debugMode ? 'translate-x-5' : 'translate-x-0'
+                                    }`} />
+                                </button>
+                            </div>
+                        </div>
+
                         {/* Mode Tabs */}
                         <div className="flex gap-1.5 overflow-x-auto pb-0.5 -mx-1 px-1 scrollbar-none">
                             {visibleModes.map((m) => (
@@ -626,8 +744,8 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
                                                 disabled={missionActive || isReadOnly}
                                                 className={`ml-auto flex items-center gap-1.5 px-2 py-2 rounded-xl text-xs font-semibold transition-colors disabled:opacity-50 ${
                                                     obstacleAvoidanceEnabled
-                                                        ? 'bg-green-100 text-green-700 border border-green-300'
-                                                        : 'bg-red-50 text-red-600 border border-red-200'
+                                                        ? 'bg-blue-100 text-blue-700 border border-blue-300'
+                                                        : 'bg-amber-50 text-amber-700 border border-amber-200'
                                                 }`}
                                                 title={obstacleAvoidanceEnabled ? 'Obstacle avoidance ON' : 'Obstacle avoidance OFF'}
                                             >
@@ -660,7 +778,7 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
                                                         {missionWaypointState === 'backing_up' && `Backing up after cone ${missionWaypointIndex + 1}/${missionWaypointTotal}...`}
                                                         {missionWaypointState === 'returning' && 'Returning to home position...'}
                                                         {missionWaypointState === 'completed' && (
-                                                            <span className="flex items-center gap-1.5 text-green-600">
+                                                            <span className="flex items-center gap-1.5 text-blue-600">
                                                                 <CheckCircle2 size={16} /> Mission Complete
                                                             </span>
                                                         )}
@@ -682,7 +800,7 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
                                             <button
                                                 onClick={stopMission}
                                                 disabled={isReadOnly}
-                                                className="h-14 w-full flex items-center justify-center gap-3 bg-red-500 text-white rounded-xl hover:bg-red-600 active:bg-red-700 transition-colors text-base font-bold disabled:opacity-30 shadow-sm"
+                                                className="h-14 w-full flex items-center justify-center gap-3 bg-orange-500 text-white rounded-xl hover:bg-orange-600 active:bg-orange-700 transition-colors text-base font-bold disabled:opacity-30 shadow-sm"
                                             >
                                                 <Square size={22} />
                                                 Stop Mission
@@ -743,7 +861,7 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
                                             <button
                                                 onClick={stopConeChase}
                                                 disabled={isReadOnly}
-                                                className="h-14 w-full flex items-center justify-center gap-3 bg-red-500 text-white rounded-xl hover:bg-red-600 active:bg-red-700 transition-colors text-base font-bold disabled:opacity-30 shadow-sm"
+                                                className="h-14 w-full flex items-center justify-center gap-3 bg-orange-500 text-white rounded-xl hover:bg-orange-600 active:bg-orange-700 transition-colors text-base font-bold disabled:opacity-30 shadow-sm"
                                             >
                                                 <Square size={22} />
                                                 Stop Cone Chase
@@ -784,13 +902,13 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
                                             {/* Lock-on status */}
                                             <div className={`p-4 rounded-xl border-2 ${
                                                 lockOnLocked
-                                                    ? 'bg-green-50 border-green-300'
+                                                    ? 'bg-blue-50 border-blue-300'
                                                     : 'bg-yellow-50 border-yellow-300 animate-pulse'
                                             }`}>
                                                 <div className="flex items-center justify-between">
                                                     <div className="flex items-center gap-2">
-                                                        <Crosshair size={22} className={lockOnLocked ? 'text-green-600' : 'text-yellow-600'} />
-                                                        <span className={`text-lg font-bold ${lockOnLocked ? 'text-green-700' : 'text-yellow-700'}`}>
+                                                        <Crosshair size={22} className={lockOnLocked ? 'text-blue-600' : 'text-yellow-600'} />
+                                                        <span className={`text-lg font-bold ${lockOnLocked ? 'text-blue-700' : 'text-yellow-700'}`}>
                                                             {lockOnLocked ? 'LOCKED' : 'SEARCHING...'}
                                                         </span>
                                                     </div>
@@ -806,7 +924,7 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
                                             <button
                                                 onClick={stopLockOn}
                                                 disabled={isReadOnly}
-                                                className="h-14 w-full flex items-center justify-center gap-3 bg-red-500 text-white rounded-xl hover:bg-red-600 active:bg-red-700 transition-colors text-base font-bold disabled:opacity-30 shadow-sm"
+                                                className="h-14 w-full flex items-center justify-center gap-3 bg-orange-500 text-white rounded-xl hover:bg-orange-600 active:bg-orange-700 transition-colors text-base font-bold disabled:opacity-30 shadow-sm"
                                             >
                                                 <Square size={22} />
                                                 Stop Lock-On
@@ -828,117 +946,6 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
                 )}
             </div>
 
-            {/* Robot Connection */}
-            <div className="p-3 bg-gray-50 rounded-xl border border-border">
-                {debugMode ? (
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 bg-purple-100">
-                            <Bug size={20} className="text-purple-600" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                            <div className="text-sm font-semibold text-text-primary">
-                                Debug Mode
-                            </div>
-                            <div className="text-xs text-purple-600">
-                                Simulated robot active
-                            </div>
-                        </div>
-                        <span className="px-2.5 py-1 bg-purple-100 text-purple-700 rounded-lg text-xs font-semibold">
-                            (Debug)
-                        </span>
-                    </div>
-                ) : (
-                    <>
-                        <div className="flex items-center gap-3">
-                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                                robotConnected ? 'bg-green-100' : 'bg-gray-200'
-                            }`}>
-                                <Bot size={20} className={robotConnected ? 'text-green-600' : 'text-gray-400'} />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                                <div className="text-sm font-semibold text-text-primary">
-                                    {robotConnected ? 'Connected' : 'ConePilot'}
-                                </div>
-                                <div className="text-xs text-text-secondary truncate">
-                                    {robotConnected ? urlInput : 'Not connected'}
-                                </div>
-                            </div>
-                            {robotConnected && (
-                                <button
-                                    onClick={disconnectRobot}
-                                    className="h-11 px-4 bg-red-50 text-red-600 border border-red-200 rounded-xl text-sm font-semibold hover:bg-red-100 active:bg-red-200 transition-colors flex items-center gap-2"
-                                >
-                                    <WifiOff size={16} />
-                                    <span className="hidden sm:inline">Disconnect</span>
-                                </button>
-                            )}
-                        </div>
-                        {!robotConnected && (
-                            <div className="flex flex-col gap-2 mt-2">
-                                <div className="flex gap-2">
-                                    <input
-                                        type="text"
-                                        value={isDiscovering ? 'Scanning network...' : urlInput}
-                                        onChange={(e) => setUrlInput(e.target.value)}
-                                        placeholder="http://..."
-                                        disabled={isDiscovering}
-                                        className="flex-1 min-w-0 px-3 py-2.5 text-sm border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
-                                    />
-                                    <button
-                                        onClick={() => {
-                                            setIsDiscovering(true);
-                                            fetch('/api/discover-robot')
-                                                .then(r => r.json())
-                                                .then(data => {
-                                                    if (data.found && data.url) {
-                                                        setUrlInput(data.url);
-                                                    }
-                                                })
-                                                .catch(() => {})
-                                                .finally(() => setIsDiscovering(false));
-                                        }}
-                                        disabled={isDiscovering}
-                                        className="h-11 w-11 flex items-center justify-center bg-blue-50 text-blue-600 border border-blue-200 rounded-xl text-sm font-semibold hover:bg-blue-100 active:bg-blue-200 transition-colors disabled:opacity-50 flex-shrink-0"
-                                        title="Scan for robot"
-                                    >
-                                        {isDiscovering ? (
-                                            <span className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                                        ) : (
-                                            <Target size={16} />
-                                        )}
-                                    </button>
-                                    <button
-                                        onClick={handleConnect}
-                                        disabled={isConnecting || isDiscovering}
-                                        className="h-11 px-4 bg-green-50 text-green-600 border border-green-200 rounded-xl text-sm font-semibold hover:bg-green-100 active:bg-green-200 transition-colors disabled:opacity-50 flex items-center gap-2 flex-shrink-0"
-                                    >
-                                        {isConnecting ? '...' : <Wifi size={16} />}
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-                    </>
-                )}
-
-                {/* Debug Mode Toggle */}
-                <div className={`flex items-center justify-between mt-3 pt-3 border-t border-border ${robotConnected && !debugMode ? 'opacity-40 pointer-events-none' : ''}`}>
-                    <div className="flex items-center gap-2 text-sm text-text-secondary">
-                        <Bug size={16} />
-                        Debug Mode
-                    </div>
-                    <button
-                        onClick={() => setDebugMode(!debugMode)}
-                        disabled={robotConnected && !debugMode}
-                        className={`relative w-11 h-6 rounded-full transition-colors ${
-                            debugMode ? 'bg-purple-500' : 'bg-gray-300'
-                        }`}
-                    >
-                        <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
-                            debugMode ? 'translate-x-5' : 'translate-x-0'
-                        }`} />
-                    </button>
-                </div>
-            </div>
         </div>
     );
 };
