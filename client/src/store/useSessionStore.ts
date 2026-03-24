@@ -346,7 +346,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     },
 
     removeCone: async (sessionId, coneId) => {
-        await api.delete(`/sessions/${sessionId}/cones/${coneId}`);
+        // Optimistic remove so UI stays responsive
         set(state => {
             if (!state.currentSession || state.currentSession.id !== sessionId) return state;
             return {
@@ -356,6 +356,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
                 }
             };
         });
+        try {
+            await api.delete(`/sessions/${sessionId}/cones/${coneId}`);
+        } catch (e) {
+            // Already removed or network error — cone is gone from UI either way
+            console.warn('removeCone API error (cone likely already deleted):', e);
+        }
     },
 
     removeAllCones: async (sessionId) => {
