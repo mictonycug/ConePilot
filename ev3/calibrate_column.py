@@ -6,7 +6,7 @@ Usage: python3 calibrate_column.py
 import ev3dev.ev3 as ev3
 
 PORT = 'outA'
-SPEED = 12
+SPEED = 200
 
 motor = ev3.LargeMotor(PORT)
 if not motor.connected:
@@ -14,8 +14,8 @@ if not motor.connected:
     exit(1)
 
 motor.position = 0
-up_pos = 0
-down_pos = 100
+up_pos = 200
+down_pos = -200
 
 print("=" * 45)
 print("  Column/Lift Calibration")

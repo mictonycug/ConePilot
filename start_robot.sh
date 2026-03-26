@@ -25,7 +25,7 @@ LOG_DIR="$SCRIPT_DIR/logs"
 
 ROS_DISTRO="jazzy"
 ROS_DOMAIN=58
-TURTLEBOT_MODEL="burger"
+TURTLEBOT_MODEL="waffle_pi"
 BRIDGE_PORT=8888
 
 # How long to wait for robot.launch.py before starting bridge

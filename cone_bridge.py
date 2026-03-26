@@ -315,16 +315,19 @@ class ConeBridgeNode(Node):
 
     # ── Navigation (uses fused position) ──────────────────────────
 
-    def get_adjusted_placement_goal(self, wp_x, wp_y):
+    def get_adjusted_placement_goal(self, wp_x, wp_y, reverse=False):
         """Offset navigation goal so the mechanism center lands at (wp_x, wp_y).
         The fused position tracks the UWB tag, which is MECHANISM_OFFSET_FORWARD
-        behind the mechanism. We back off the goal in the approach direction so
-        the mechanism arrives exactly at the waypoint."""
+        behind the mechanism. When reverse=True, the robot backs in so the
+        mechanism faces opposite the approach — offset sign flips."""
         cur_x, cur_y = self.get_fused_position()
         approach_angle = math.atan2(wp_y - cur_y, wp_x - cur_x)
-        adj_x = wp_x - MECHANISM_OFFSET_FORWARD * math.cos(approach_angle) \
+        # Forward: UWB stops short, mechanism ahead reaches cone
+        # Reverse: UWB stops past, mechanism behind (facing origin) reaches cone
+        sign = 1.0 if reverse else -1.0
+        adj_x = wp_x + sign * MECHANISM_OFFSET_FORWARD * math.cos(approach_angle) \
                      + MECHANISM_OFFSET_LATERAL * math.sin(approach_angle)
-        adj_y = wp_y - MECHANISM_OFFSET_FORWARD * math.sin(approach_angle) \
+        adj_y = wp_y + sign * MECHANISM_OFFSET_FORWARD * math.sin(approach_angle) \
                      - MECHANISM_OFFSET_LATERAL * math.cos(approach_angle)
         # Clamp to field boundaries
         adj_x = max(FIELD_MIN_X, min(FIELD_MAX_X, adj_x))
@@ -1033,7 +1036,7 @@ class ConeBridgeNode(Node):
                 # Navigate to staging point
                 self.re_anchor()
                 self.cancel_nav = False
-                success = self.navigate_to(staging_x, staging_y)
+                success = self.navigate_to(staging_x, staging_y, obstacle_avoidance=False)
                 if not success or self.collection_cancel:
                     results[i]['status'] = 'missing'
                     break
@@ -1066,7 +1069,18 @@ class ConeBridgeNode(Node):
                 results[i]['status'] = result
 
                 if result == 'collected':
-                    self.get_logger().info(f'[COLLECT] Cone {i+1}/{total} collected!')
+                    self.get_logger().info(f'[COLLECT] Cone {i+1}/{total} reached — picking up with EV3...')
+                    self.collection_status.update({
+                        'phase': 'picking_up',
+                        'phase_detail': f'Picking up cone {i+1}/{total}',
+                    })
+                    # Trigger EV3 mechanism: lower column, screw on, raise
+                    pickup_ok = self.ev3_pickup_cone()
+                    if not pickup_ok:
+                        self.get_logger().warn(f'[COLLECT] EV3 pickup failed for cone {i+1}/{total}')
+                        results[i]['status'] = 'missing'
+                    else:
+                        self.get_logger().info(f'[COLLECT] Cone {i+1}/{total} picked up!')
                     self.collection_status.update({
                         'phase': 'dwell',
                         'phase_detail': f'Collected cone {i+1}/{total} — dwelling',
@@ -1320,7 +1334,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not bridge_node.calibrate():
                         return
                 bridge_node.re_anchor()
-                bridge_node.navigate_to(x, y)
+                bridge_node.navigate_to(x, y, obstacle_avoidance=False)
 
             threading.Thread(target=nav, daemon=True).start()
             self._json_response({'ok': True, 'msg': 'navigation started'})
@@ -1355,8 +1369,6 @@ class Handler(BaseHTTPRequestHandler):
                         bridge_node.waypoint_state = 'idle'
                         return
 
-                # Track whether we just placed a cone (need to reverse to next)
-                just_placed = False
                 prev_x, prev_y = bridge_node.get_fused_position()
 
                 bridge_node.waypoint_total = len(waypoints)
@@ -1367,13 +1379,13 @@ class Handler(BaseHTTPRequestHandler):
                     # Re-anchor from UWB before each waypoint
                     bridge_node.re_anchor()
 
-                    # After placing a cone, reverse to the next waypoint
-                    # so we don't drive over the cone we just dropped
-                    nav_reverse = just_placed and mechanism_action == 'place'
+                    # Always reverse to placement waypoints so the robot
+                    # backs in and can continue backward to clear the cone
+                    nav_reverse = mechanism_action == 'place'
 
                     # For placement, offset goal so mechanism (not UWB tag) lands at waypoint
                     if mechanism_action == 'place':
-                        nav_x, nav_y = bridge_node.get_adjusted_placement_goal(wp['x'], wp['y'])
+                        nav_x, nav_y = bridge_node.get_adjusted_placement_goal(wp['x'], wp['y'], reverse=True)
                     else:
                         nav_x, nav_y = wp['x'], wp['y']
 
@@ -1382,7 +1394,7 @@ class Handler(BaseHTTPRequestHandler):
                         f'({wp["x"]:.2f}, {wp["y"]:.2f})'
                         f'{" [REVERSE]" if nav_reverse else " [FORWARD]"}'
                     )
-                    success = bridge_node.navigate_to(nav_x, nav_y, reverse=nav_reverse, obstacle_avoidance=use_obstacle_avoidance)
+                    success = bridge_node.navigate_to(nav_x, nav_y, reverse=nav_reverse, obstacle_avoidance=False)
                     if not success:
                         bridge_node.get_logger().warn(
                             f'Waypoint {i+1} cancelled'
@@ -1407,7 +1419,7 @@ class Handler(BaseHTTPRequestHandler):
                                 f'(>{UWB_VERIFY_TOLERANCE}m), retry {retry+1}/{UWB_VERIFY_MAX_RETRIES}'
                             )
                             bridge_node.re_anchor()
-                            success = bridge_node.navigate_to(nav_x, nav_y, reverse=use_reverse, obstacle_avoidance=use_obstacle_avoidance)
+                            success = bridge_node.navigate_to(nav_x, nav_y, reverse=nav_reverse, obstacle_avoidance=False)
                             if not success:
                                 break
                         if not success:
@@ -1417,7 +1429,6 @@ class Handler(BaseHTTPRequestHandler):
                             break
 
                     # Trigger EV3 mechanism at waypoint (if requested)
-                    just_placed = False
                     if mechanism_action and not bridge_node.cancel_nav:
                         bridge_node.waypoint_state = 'mechanism'
                         bridge_node.get_logger().info(
@@ -1425,29 +1436,22 @@ class Handler(BaseHTTPRequestHandler):
                         )
                         if mechanism_action == 'place':
                             bridge_node.ev3_place_cone()
-                            just_placed = True
 
-                            # Drive forward 30cm past the placed cone (same as approach direction).
-                            # The mechanism is at the front, so reversing would drag the cone —
-                            # instead we drive forward so the mechanism clears the cone cleanly.
+                            # Drive straight backward 35cm — no rotation.
+                            # The robot backed in, so continuing backward moves
+                            # the mechanism away from the placed cone.
                             if not bridge_node.cancel_nav:
-                                cur_x, cur_y = bridge_node.get_fused_position()
-                                dx = cur_x - prev_x
-                                dy = cur_y - prev_y
-                                dist = math.sqrt(dx * dx + dy * dy)
-                                if dist > 0.01:
-                                    ux = dx / dist
-                                    uy = dy / dist
-                                else:
-                                    ux, uy = 1.0, 0.0
-                                backup_x = max(FIELD_MIN_X, min(FIELD_MAX_X, cur_x + ux * 0.30))
-                                backup_y = max(FIELD_MIN_Y, min(FIELD_MAX_Y, cur_y + uy * 0.30))
                                 bridge_node.waypoint_state = 'backing_up'
-                                bridge_node.get_logger().info(
-                                    f'[PLACE] Driving forward 30cm past cone to ({backup_x:.2f}, {backup_y:.2f})'
-                                )
-                                bridge_node.re_anchor()
-                                bridge_node.navigate_to(backup_x, backup_y, obstacle_avoidance=False, timeout=20.0)
+                                bridge_node.get_logger().info('[PLACE] Backing up 35cm straight (no rotation)')
+                                start_x, start_y = bridge_node.get_fused_position()
+                                backup_dist = 0.0
+                                while backup_dist < 0.35 and not bridge_node.cancel_nav:
+                                    bridge_node.send_velocity(-LINEAR_SPEED, 0.0)
+                                    time.sleep(0.05)
+                                    cx, cy = bridge_node.get_fused_position()
+                                    backup_dist = math.sqrt((cx - start_x)**2 + (cy - start_y)**2)
+                                bridge_node.send_velocity(0.0, 0.0)
+                                bridge_node.get_logger().info(f'[PLACE] Backed up {backup_dist:.2f}m')
 
                         elif mechanism_action == 'pickup':
                             bridge_node.ev3_pickup_cone()
@@ -1477,9 +1481,9 @@ class Handler(BaseHTTPRequestHandler):
                 # Return to home position after placing all cones
                 if not bridge_node.cancel_nav and mechanism_action == 'place':
                     bridge_node.waypoint_state = 'returning'
-                    bridge_node.get_logger().info('[WAYPOINTS] All cones placed — returning to home (0.5, 0.5)')
+                    bridge_node.get_logger().info('[WAYPOINTS] All cones placed — returning to home (3, 1)')
                     bridge_node.re_anchor()
-                    bridge_node.navigate_to(0.5, 0.5, obstacle_avoidance=False, timeout=90.0)
+                    bridge_node.navigate_to(3.0, 1.0, obstacle_avoidance=False, timeout=90.0)
 
                 bridge_node.waypoint_state = 'completed'
                 bridge_node.waypoint_index = -1

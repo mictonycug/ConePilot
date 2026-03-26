@@ -23,19 +23,23 @@ import ev3dev.ev3 as ev3
 # ── Motor config (from test2.py) ──────────────────────────
 COLUMN_PORT = 'outA'
 COLUMN_DIRECTION = 1
-COLUMN_SPEED = 12
-COLUMN_POS_TOP = 100
-COLUMN_POS_BOTTOM = -100
+COLUMN_SPEED = 200
+COLUMN_POS_TOP = 200
+COLUMN_POS_BOTTOM = -200
 
 SPIRALS_PORT = 'outB'
-SPIRALS_DIRECTION = 1
+SPIRALS_DIRECTION = -1
+SPIRALS_ABS_POS = 180
 SPIRALS_SPEED = 720
+SPIRALS_STEP = SPIRALS_DIRECTION * 360
+SPIRALS_DROP_OFFSET = 30
+SPIRALS_PICKUP_OFFSET = 0
 
 # ── Motor functions (from test2.py) ───────────────────────
 column = None
 spirals = None
-spirals_abs_pos = 0
 cones = 0
+spirals_abs_pos = 0
 busy = False
 last_action = None
 last_error = None
@@ -47,44 +51,53 @@ def run_column(pos):
 
 def column_reset():
     run_column(COLUMN_POS_TOP)
-    time.sleep(8)
+    time.sleep(3)
 
 
 def column_down():
     run_column(COLUMN_POS_BOTTOM)
-    time.sleep(4)
+    time.sleep(3)
 
 
 def column_up():
     run_column(COLUMN_POS_TOP)
-    time.sleep(4)
+    time.sleep(3)
 
 
-def run_spirals(cone_no):
+def run_spirals_drop(cone_no):
+    """Move spiral one step for dropping (with base offset)."""
+    if cone_no == 0:
+        spirals_reset()
+    else:
+        spirals.run_to_abs_pos(speed_sp=SPIRALS_SPEED,
+                           position_sp=(SPIRALS_ABS_POS + SPIRALS_DROP_OFFSET + cone_no * SPIRALS_STEP))
+
+
+def run_spirals_pickup(cone_no):
+    """Move spiral one step for picking up (with base offset)."""
     spirals.run_to_abs_pos(speed_sp=SPIRALS_SPEED,
-                           position_sp=(spirals_abs_pos + SPIRALS_DIRECTION * cone_no * 360))
+                           position_sp=(SPIRALS_ABS_POS + SPIRALS_PICKUP_OFFSET + cone_no * SPIRALS_STEP))
 
 
 def spirals_reset():
-    run_spirals(0)
+    spirals.run_to_abs_pos(speed_sp=SPIRALS_SPEED, position_sp=SPIRALS_ABS_POS)
 
 
 def do_place():
-    """Drop a cone: column stays up, spin spiral to release cone."""
-    global cones, busy, last_action, last_error
+    """Drop a cone: column stays up, spin spiral one step to release cone."""
+    global cones, spirals_abs_pos, busy, last_action, last_error
     if busy:
         return False, 'mechanism busy'
     busy = True
     last_error = None
     try:
-        cones -= 1
-        if cones < 0:
-            cones = 0
+        cones = max(0, cones - 1)
         print("[PLACE] cones=%d  spinning spiral (dropping cone)..." % cones)
-        run_spirals(cones)
-        time.sleep(2)
+        run_spirals_drop(cones)
+        time.sleep(3)
+        spirals_abs_pos = spirals.position
         last_action = 'placed cone (remaining: %d)' % cones
-        print("[PLACE] done. spiral pos=%d" % spirals.position)
+        print("[PLACE] done. spiral abs_pos=%d actual=%d" % (spirals_abs_pos, spirals.position))
         return True, last_action
     except Exception as e:
         last_error = str(e)
@@ -94,19 +107,20 @@ def do_place():
 
 
 def do_pickup():
-    """Pick up a cone: lower column + spin spiral forward (screw on) + raise."""
-    global cones, busy, last_action, last_error
+    """Pick up a cone: lower column + spin spiral one step (screw on) + raise."""
+    global cones, spirals_abs_pos, busy, last_action, last_error
     if busy:
         return False, 'mechanism busy'
     busy = True
     last_error = None
     try:
-        cones += 2
+        cones += 1
         print("[PICKUP] cones=%d  lowering..." % cones)
         column_down()
         print("[PICKUP] spinning spiral forward (screwing on)...")
-        run_spirals(cones)
-        time.sleep(2)
+        run_spirals_pickup(cones)
+        time.sleep(3)
+        spirals_abs_pos = spirals.position
         print("[PICKUP] raising...")
         column_up()
         last_action = 'picked up cone (total: %d)' % cones
@@ -121,7 +135,7 @@ def do_pickup():
 
 def do_calibrate():
     """Reset motors to home position."""
-    global cones, busy, last_action
+    global cones, spirals_abs_pos, busy, last_action
     if busy:
         return False, 'mechanism busy'
     busy = True
@@ -130,6 +144,7 @@ def do_calibrate():
         column_reset()
         spirals_reset()
         cones = 0
+        spirals_abs_pos = 0
         last_action = 'calibrated'
         print("[CALIBRATE] done.")
         return True, 'motors reset'
@@ -142,6 +157,7 @@ def get_status():
         'ready': not busy,
         'busy': busy,
         'cones': cones,
+        'spirals_abs_pos': spirals_abs_pos,
         'spiral_position': spirals.position if spirals else None,
         'column_position': column.position if column else None,
         'last_action': last_action,
