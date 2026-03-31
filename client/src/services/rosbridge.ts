@@ -66,6 +66,7 @@ class RosBridge {
     private onStatusUpdate: StatusCallback | null = null;
 
     private _connected = false;
+    private _velocityInFlight = false;
 
     get connected() { return this._connected; }
 
@@ -136,7 +137,7 @@ class RosBridge {
         }
     }
 
-    async sendWaypoints(waypoints: { x: number; y: number }[], dwellTime?: number, obstacleAvoidance: boolean = true, mechanism?: 'place' | 'pickup' | null): Promise<boolean> {
+    async sendWaypoints(waypoints: { x: number; y: number }[], dwellTime?: number, obstacleAvoidance: boolean = true, mechanism?: 'place' | 'pickup' | null, ramDistance?: number): Promise<boolean> {
         if (!this._connected) return false;
         try {
             const payload: Record<string, unknown> = {
@@ -145,6 +146,7 @@ class RosBridge {
                 obstacle_avoidance: obstacleAvoidance,
             };
             if (mechanism) payload.mechanism = mechanism;
+            if (ramDistance) payload.ram_distance = ramDistance;
             console.log('[RosBridge] sendWaypoints payload:', JSON.stringify(payload));
             const res = await fetch(`${this.baseUrl}/waypoints`, {
                 method: 'POST',
@@ -170,21 +172,34 @@ class RosBridge {
     }
 
     async sendVelocity(linear: number, angular: number): Promise<void> {
-        if (!this._connected) {
-            console.warn('[RosBridge] sendVelocity ignored — not connected');
-            return;
+        if (!this._connected) return;
+        if (this._velocityInFlight) return; // drop if previous request still in flight
+        this._velocityInFlight = true;
+        try {
+            await fetch(`${this.baseUrl}/cmd_vel`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ linear, angular }),
+            });
+        } catch (e) {
+            console.error('[RosBridge] cmd_vel failed:', e);
+        } finally {
+            this._velocityInFlight = false;
         }
-        console.log(`[RosBridge] cmd_vel: linear=${linear}, angular=${angular}`);
-        await fetch(`${this.baseUrl}/cmd_vel`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ linear, angular }),
-        }).catch((e) => console.error('[RosBridge] cmd_vel failed:', e));
     }
 
     async stop(): Promise<void> {
         if (!this._connected) return;
         await fetch(`${this.baseUrl}/stop`, { method: 'POST' }).catch(() => {});
+    }
+
+    async beep(sound: number = 4): Promise<void> {
+        if (!this._connected) return;
+        await fetch(`${this.baseUrl}/beep`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sound }),
+        }).catch(() => {});
     }
 
     async startConeChase(maxCones?: number, camera?: number): Promise<boolean> {

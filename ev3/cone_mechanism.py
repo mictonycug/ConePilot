@@ -25,6 +25,7 @@ COLUMN_PORT = 'outA'
 COLUMN_DIRECTION = 1
 COLUMN_SPEED = 200
 COLUMN_POS_TOP = 200
+COLUMN_POS_TOP_PICKUP = 260  # raised pickup height, used during pickup
 COLUMN_POS_BOTTOM = -200
 
 SPIRALS_PORT = 'outB'
@@ -121,8 +122,9 @@ def do_pickup():
         run_spirals_pickup(cones)
         time.sleep(3)
         spirals_abs_pos = spirals.position
-        print("[PICKUP] raising...")
-        column_up()
+        print("[PICKUP] raising (pickup height)...")
+        run_column(COLUMN_POS_TOP_PICKUP)
+        time.sleep(3)
         last_action = 'picked up cone (total: %d)' % cones
         print("[PICKUP] done.")
         return True, last_action

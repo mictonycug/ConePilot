@@ -28,6 +28,7 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist, TwistStamped, PoseStamped
 from nav_msgs.msg import Odometry
+from turtlebot3_msgs.msg import Sound
 
 from cone_detector import (
     detect_red_cones, draw_detections, estimate_distance,
@@ -76,6 +77,7 @@ class ConeBridgeNode(Node):
     def __init__(self):
         super().__init__('cone_bridge')
         self.cmd_vel_pub = self.create_publisher(TwistStamped, '/cmd_vel', 10)
+        self.sound_pub = self.create_publisher(Sound, '/sound', 10)
 
         # Raw odom state
         self.odom_x = 0.0
@@ -295,6 +297,13 @@ class ConeBridgeNode(Node):
         msg.twist.linear.x = float(linear)
         msg.twist.angular.z = float(angular)
         self.cmd_vel_pub.publish(msg)
+
+    def beep(self, sound_id=4):
+        """Publish a beep to the TurtleBot3 buzzer.
+        sound_id: 0=off 1=on 2=low 3=mid 4=high 5=ascending"""
+        msg = Sound()
+        msg.value = sound_id
+        self.sound_pub.publish(msg)
 
     def stop(self):
         self.cancel_nav = True
@@ -1318,6 +1327,11 @@ class Handler(BaseHTTPRequestHandler):
             bridge_node.stop()
             self._json_response({'ok': True})
 
+        elif self.path == '/beep':
+            sound_id = int(body.get('sound', 4))
+            bridge_node.beep(sound_id)
+            self._json_response({'ok': True})
+
         elif self.path == '/navigate':
             if bridge_node.cone_chase_active:
                 self._json_response({'error': 'cone chase active'}, 409)
@@ -1350,6 +1364,7 @@ class Handler(BaseHTTPRequestHandler):
             dwell_time = body.get('dwell_time', 0)
             use_obstacle_avoidance = body.get('obstacle_avoidance', True)
             mechanism_action = body.get('mechanism', None)  # 'place' | 'pickup' | None
+            ram_distance = float(body.get('ram_distance', 0.0))
 
             bridge_node.get_logger().info(
                 f'[WAYPOINTS] Received: {len(waypoints)} waypoints, '
@@ -1454,6 +1469,22 @@ class Handler(BaseHTTPRequestHandler):
                                 bridge_node.get_logger().info(f'[PLACE] Backed up {backup_dist:.2f}m')
 
                         elif mechanism_action == 'pickup':
+                            # Ram forward before pickup so cone is seated in mechanism
+                            if ram_distance > 0 and not bridge_node.cancel_nav:
+                                bridge_node.waypoint_state = 'backing_up'
+                                bridge_node.get_logger().info(
+                                    f'[PICKUP] Ramming {ram_distance:.2f}m forward to seat cone...'
+                                )
+                                start_x, start_y = bridge_node.get_fused_position()
+                                rammed = 0.0
+                                while rammed < ram_distance and not bridge_node.cancel_nav:
+                                    bridge_node.send_velocity(LINEAR_SPEED, 0.0)
+                                    time.sleep(0.05)
+                                    cx, cy = bridge_node.get_fused_position()
+                                    rammed = math.sqrt((cx - start_x)**2 + (cy - start_y)**2)
+                                bridge_node.send_velocity(0.0, 0.0)
+                                bridge_node.get_logger().info(f'[PICKUP] Rammed {rammed:.2f}m')
+                                bridge_node.waypoint_state = 'mechanism'
                             bridge_node.ev3_pickup_cone()
 
                     # Update prev position for next backup direction calculation

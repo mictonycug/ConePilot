@@ -56,15 +56,24 @@ PARALLEL_GROUPS = [
 
 # ── Sensor I/O ────────────────────────────────────────────
 
-def safe_read(sensor, retries=3):
+_last_read_error: dict = {}  # key → last exception string (for debug logging)
+
+def safe_read(sensor, retries=3, key='?'):
     """Read with retry cap. Returns cm or -1."""
+    last_exc = None
     for _ in range(retries):
         try:
             d = sensor._get_distance()
             if d is not None and 2 < d < MAX_RNG:
+                _last_read_error.pop(key, None)
                 return d
-        except Exception:
-            pass
+        except Exception as e:
+            last_exc = e
+    if last_exc is not None:
+        err_str = str(last_exc)
+        if _last_read_error.get(key) != err_str:
+            _last_read_error[key] = err_str
+            print(f"[safe_read] {key} exception: {err_str}", flush=True)
     return -1
 
 
@@ -78,7 +87,7 @@ def poll_parallel(probes):
             if key not in probes:
                 continue
             def _read(k=key):
-                results[k] = safe_read(probes[k])
+                results[k] = safe_read(probes[k], key=k)
             t = threading.Thread(target=_read)
             threads.append(t)
             t.start()
@@ -347,7 +356,7 @@ def run_diagnostics(probes):
 
         results = []
         for i in range(3):
-            d = safe_read(sensor, retries=3)
+            d = safe_read(sensor, retries=3, key=key)
             tag = f"[green]{d:.0f}cm[/green]" if d > 0 else "[red]FAIL[/red]"
             console.print(f"    read {i+1}: {tag}")
             results.append(d)
@@ -371,16 +380,22 @@ def run_diagnostics(probes):
 
 def run_headless(probes, status_file):
     """Write JSON status to file instead of Rich UI."""
-    print(f"[headless] Writing to {status_file}")
+    print(f"[headless] Writing to {status_file}", flush=True)
+    print(f"[headless] Active sensors: {list(probes.keys())}", flush=True)
 
     smoothed = {}
+    error_counts = {k: 0 for k in probes}
+    was_erroring = {k: False for k in probes}
+    cycle = 0
+    t_start = time.time()
+    last_debug_t = t_start
 
     def cleanup(*_):
         try:
             os.remove(status_file)
         except FileNotFoundError:
             pass
-        print("\n[headless] Stopped.")
+        print("\n[headless] Stopped.", flush=True)
         sys.exit(0)
 
     signal.signal(signal.SIGINT, cleanup)
@@ -388,19 +403,47 @@ def run_headless(probes, status_file):
 
     while True:
         raw = poll_parallel(probes)
+        cycle += 1
 
         for key, val in raw.items():
             if val > 0:
+                # Sensor recovered from error state
+                if was_erroring.get(key):
+                    print(f"[headless] {key} RECOVERED after {error_counts[key]} errors", flush=True)
+                    was_erroring[key] = False
                 if key in smoothed and smoothed[key] > 0:
                     smoothed[key] = ALPHA * val + (1 - ALPHA) * smoothed[key]
                 else:
                     smoothed[key] = val
-            elif key not in smoothed:
-                smoothed[key] = -1
+            else:
+                error_counts[key] = error_counts.get(key, 0) + 1
+                # Warn on first sustained error (3 consecutive bad reads)
+                if not was_erroring.get(key) and error_counts[key] >= 3:
+                    print(f"[headless] {key} ERRORING (errors={error_counts[key]})", flush=True)
+                    was_erroring[key] = True
+                if key not in smoothed:
+                    smoothed[key] = -1
+
+        # Periodic debug print every 10 s
+        now = time.time()
+        if now - last_debug_t >= 10.0:
+            uptime = now - t_start
+            readings_str = "  ".join(
+                f"{k}={'ERR' if v < 0 else f'{v:.0f}cm'}"
+                for k, v in sorted(smoothed.items())
+            )
+            hz = cycle / uptime if uptime > 0 else 0
+            print(f"[headless] uptime={uptime:.0f}s  cycles={cycle}  {hz:.1f}Hz  {readings_str}", flush=True)
+            bad = {k: v for k, v in error_counts.items() if v > 0}
+            if bad:
+                print(f"[headless] error counts: {bad}", flush=True)
+            last_debug_t = now
 
         status = {
-            "timestamp": time.time(),
+            "timestamp": now,
             "readings": {k: round(v, 1) for k, v in smoothed.items()},
+            "errors": error_counts.copy(),
+            "cycle": cycle,
         }
         tmp = status_file + '.tmp'
         with open(tmp, 'w') as f:

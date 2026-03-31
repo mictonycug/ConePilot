@@ -4,6 +4,7 @@ import useImage from 'use-image';
 import { useSessionStore } from '../../store/useSessionStore';
 import { ConeNode } from './ConeNode';
 import { Grid3x3 } from 'lucide-react';
+import { rosBridge } from '../../services/rosbridge';
 
 // Pulsating cone shown while placement API call is in flight
 const PlacingConeGhost = ({ x, y, size }: { x: number; y: number; size: number }) => {
@@ -374,6 +375,13 @@ export const FieldCanvas: React.FC<FieldCanvasProps> = ({ width: _width, height:
                 ref={stageRef}
             >
                 <Layer x={PADDING} y={PADDING}>
+                    {/* Secret top-left corner: stop all + beep */}
+                    <Rect
+                        x={0} y={0} width={36} height={36}
+                        fill="transparent"
+                        onClick={(e) => { e.cancelBubble = true; rosBridge.stop(); rosBridge.beep(5); }}
+                        onTap={(e) => { e.cancelBubble = true; rosBridge.stop(); rosBridge.beep(5); }}
+                    />
                     <Rect width={fieldWidthPx} height={fieldHeightPx} fill="#F4F4F5" stroke="#8B8B94" strokeWidth={Math.max(0.5, 1.5 * strokeScale)} />
 
                     {/* Boundary margin zone (50cm from edges) */}

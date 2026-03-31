@@ -480,7 +480,9 @@ start_ultrasonic() {
 
     mkdir -p "$LOG_DIR"
 
-    sudo python3 "$SCRIPT_DIR/ultrasonic_radar.py" --headless \
+    echo 'turtlebot' | sudo -S \
+    PYTHONPATH=/home/ubuntu/.local/lib/python3.12/site-packages \
+    python3 "$SCRIPT_DIR/ultrasonic_radar.py" --headless \
         --status-file /tmp/ultrasonic_status.json \
         >> "$LOG_DIR/ultrasonic.log" 2>&1 &
     ULTRASONIC_PID=$!
@@ -540,7 +542,9 @@ watchdog_loop() {
         if [ -n "$ULTRASONIC_PID" ] && ! is_running "ultrasonic_radar.py"; then
             log_warn "WATCHDOG: Ultrasonic Radar crashed - restarting..."
             echo "--- WATCHDOG RESTART $(date) ---" >> "$LOG_DIR/ultrasonic.log"
-            sudo python3 "$SCRIPT_DIR/ultrasonic_radar.py" --headless \
+            echo 'turtlebot' | sudo -S \
+            PYTHONPATH=/home/ubuntu/.local/lib/python3.12/site-packages \
+            python3 "$SCRIPT_DIR/ultrasonic_radar.py" --headless \
                 --status-file /tmp/ultrasonic_status.json \
                 >> "$LOG_DIR/ultrasonic.log" 2>&1 &
             ULTRASONIC_PID=$!

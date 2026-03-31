@@ -73,10 +73,16 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
     const [urlInput, setUrlInput] = useState(robotUrl);
     const [mode, setMode] = useState<Mode>('setup');
     const [showCamera, setShowCamera] = useState(false);
+
+    // Auto-show camera when collection starts
+    useEffect(() => {
+        if (collectionActive) setShowCamera(true);
+    }, [collectionActive]);
     const [isStartingPlacement, setIsStartingPlacement] = useState(false);
     const [connectionTimedOut, setConnectionTimedOut] = useState(false);
     const [devToolsOpen, setDevToolsOpen] = useState(false);
     const [isDiscovering, setIsDiscovering] = useState(false);
+    const [isRunningPickupScript, setIsRunningPickupScript] = useState(false);
 
     // Auto-discover robot on mount
     useEffect(() => {
@@ -138,9 +144,18 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             const key = e.key.toLowerCase();
+            if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return;
+
+            if (key === 'z' && !e.repeat) {
+                rosBridge.stop();
+                rosBridge.beep(5); // ascending screech = dramatic stack smash
+                pressedKeys.current.clear();
+                setActiveKeys(new Set());
+                return;
+            }
+
             if (!['w', 'a', 's', 'd'].includes(key)) return;
             if (e.repeat) return;
-            if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return;
             if (!robotConnected) return;
             if (useSessionStore.getState().isReadOnly) return;
             if (useSessionStore.getState().coneChaseActive) return;
@@ -214,6 +229,42 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
             }
         } finally {
             setIsStartingPlacement(false);
+        }
+    };
+
+    const handleSecretPickup = async () => {
+        if (!currentSession || !robotConnected || isRunningPickupScript) return;
+        setIsRunningPickupScript(true);
+        try {
+            const sessionId = currentSession.id;
+            const pose = useSessionStore.getState().robotPose;
+            const fw = currentSession.fieldWidth;
+            const fh = currentSession.fieldHeight;
+            const MARGIN = 0.3;
+            const rx = pose?.x ?? fw / 2;
+            const ry = pose?.y ?? fh / 2;
+            const theta = pose?.theta ?? 0;
+
+            // Place 3 cones in a row ahead of robot, 1m apart
+            const positions = [1.0, 2.0, 3.0].map(dist => ({
+                x: Math.max(MARGIN, Math.min(fw - MARGIN, rx + dist * Math.cos(theta))),
+                y: Math.max(MARGIN, Math.min(fh - MARGIN, ry + dist * Math.sin(theta))),
+            }));
+
+            for (const pos of positions) {
+                await useSessionStore.getState().addCone(sessionId, pos.x, pos.y);
+            }
+
+            const newCones = useSessionStore.getState().currentSession!.cones.slice(-3);
+            await rosBridge.sendWaypoints(
+                newCones.map(c => ({ x: c.x, y: c.y })),
+                0,
+                false,
+                'pickup',
+                0.80
+            );
+        } finally {
+            setIsRunningPickupScript(false);
         }
     };
 
@@ -457,6 +508,15 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
                         )}
                     </div>
 
+                    <CameraSection
+                        robotUrl={robotUrl}
+                        showCamera={showCamera}
+                        setShowCamera={setShowCamera}
+                        coneChaseActive={coneChaseActive}
+                        lockOnActive={lockOnActive}
+                        streamUrl={(() => { try { const u = new URL(robotUrl); return `${u.protocol}//${u.hostname}:9090/stream`; } catch { return undefined; } })()}
+                    />
+
                     <button
                         onClick={stopCollection}
                         disabled={isReadOnly}
@@ -597,6 +657,32 @@ export const SessionControls: React.FC<SessionControlsProps> = ({ onClearAll, co
                                     <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
                                         debugMode ? 'translate-x-5' : 'translate-x-0'
                                     }`} />
+                                </button>
+                            </div>
+
+                            {/* Secret buttons */}
+                            <div className="mt-3 pt-3 border-t border-border flex gap-2">
+                                <button
+                                    onClick={handleSecretPickup}
+                                    disabled={!robotConnected || isRunningPickupScript || isReadOnly}
+                                    className="flex-1 h-10 flex items-center justify-center gap-2 bg-gray-900 text-gray-400 rounded-xl text-xs font-mono hover:bg-gray-800 hover:text-gray-300 active:bg-black transition-colors disabled:opacity-30"
+                                    title="Predetermined pickup: place 3 cones → navigate → ram 80cm → EV3 pickup"
+                                >
+                                    {isRunningPickupScript ? (
+                                        <span className="w-3.5 h-3.5 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+                                    ) : (
+                                        <RotateCcw size={14} />
+                                    )}
+                                    {isRunningPickupScript ? 'running...' : '[secret]'}
+                                </button>
+                                <button
+                                    onClick={() => { rosBridge.stop(); rosBridge.beep(5); }}
+                                    disabled={!robotConnected}
+                                    className="h-10 px-4 flex items-center justify-center gap-2 bg-red-900 text-red-300 rounded-xl text-xs font-mono hover:bg-red-800 active:bg-red-950 transition-colors disabled:opacity-30"
+                                    title="Stop all + beep (stack smash)"
+                                >
+                                    <XCircle size={14} />
+                                    SMASH
                                 </button>
                             </div>
                         </div>
@@ -982,22 +1068,30 @@ const CameraSection: React.FC<{
     setShowCamera: (v: boolean) => void;
     coneChaseActive: boolean;
     lockOnActive: boolean;
-}> = ({ robotUrl, showCamera, setShowCamera, coneChaseActive, lockOnActive }) => (
-    <div className="p-3.5 bg-gray-50 rounded-xl border border-border">
-        <button
-            onClick={() => setShowCamera(!showCamera)}
-            className="w-full h-11 flex items-center justify-center gap-2 text-sm font-semibold text-text-secondary hover:text-text-primary transition-colors rounded-lg"
-        >
-            {showCamera ? <CameraOff size={18} /> : <Camera size={18} />}
-            {showCamera ? 'Hide Camera' : 'Show Camera'}
-        </button>
-        {showCamera && (
-            <img
-                src={`${robotUrl}/camera`}
-                alt="Robot camera feed"
-                className="w-full rounded-lg border border-gray-200 mt-2"
-                style={{ aspectRatio: '4/3', objectFit: 'cover', background: '#000' }}
-            />
-        )}
-    </div>
-);
+    streamUrl?: string;
+}> = ({ robotUrl, showCamera, setShowCamera, coneChaseActive, lockOnActive, streamUrl }) => {
+    const src = streamUrl ?? `${robotUrl}/camera`;
+    return (
+        <div className="p-3.5 bg-gray-50 rounded-xl border border-border">
+            <button
+                onClick={() => setShowCamera(!showCamera)}
+                className="w-full h-11 flex items-center justify-center gap-2 text-sm font-semibold text-text-secondary hover:text-text-primary transition-colors rounded-lg"
+            >
+                {showCamera ? <CameraOff size={18} /> : <Camera size={18} />}
+                {showCamera ? 'Hide Camera' : 'Show Camera'}
+            </button>
+            {showCamera && (
+                <>
+                    <img
+                        src={src}
+                        alt="Robot camera feed"
+                        className="w-full rounded-lg border border-gray-200 mt-1"
+                        style={{ maxHeight: '180px', objectFit: 'contain', background: '#000' }}
+                        onLoad={() => console.log('[Camera] stream loaded:', src)}
+                        onError={(e) => console.error('[Camera] stream error:', src, e)}
+                    />
+                </>
+            )}
+        </div>
+    );
+};
