@@ -114,7 +114,11 @@ export const deleteCone = async (req: Request, res: Response) => {
         await prisma.cone.delete({ where: { id: coneId } });
 
         res.json({ success: true });
-    } catch (error) {
+    } catch (error: any) {
+        // P2025: record already deleted — treat as success
+        if (error?.code === 'P2025') {
+            return res.json({ success: true });
+        }
         console.error('DeleteCone error:', error);
         res.status(500).json({ message: 'Internal server error' });
     }
